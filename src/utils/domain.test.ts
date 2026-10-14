@@ -51,7 +51,7 @@ describe("Domain Algorithms - accept matching", () => {
 
 describe("Tool Registry & Schema", () => {
   it("all tools have valid ids, categories and build functions", () => {
-    expect(TOOLS.length).toBeGreaterThanOrEqual(20);
+    expect(TOOLS.length).toBe(12);
     for (const tool of TOOLS) {
       expect(tool.id).toBeTruthy();
       expect(tool.name).toBeTruthy();
@@ -64,6 +64,76 @@ describe("Tool Registry & Schema", () => {
       const defaults = getDefaults(tool);
       expect(typeof defaults).toBe("object");
     }
+  });
+
+  it("consolidated video-transcode generates valid ffmpeg pipeline", () => {
+    const tool = getTool("video-transcode");
+    const defaults = getDefaults(tool);
+    const result = tool.build({
+      values: { ...defaults, format: "mp4", crf: 28, scale: "720", mute: true },
+      inputs: ["input.mov"],
+      infos: [],
+    });
+    expect(result.ext).toBe("mp4");
+    expect(result.args).toContain("-crf");
+    expect(result.args).toContain("28");
+    expect(result.args).toContain("-an");
+    expect(result.args.some((arg) => arg.includes("scale=-2:720"))).toBe(true);
+  });
+
+  it("consolidated video-edit combines trim, speed, and flip", () => {
+    const tool = getTool("video-edit");
+    const defaults = getDefaults(tool);
+    const result = tool.build({
+      values: { ...defaults, start: 2, end: 10, speed: "2", transform: "hflip" },
+      inputs: ["sample.mp4"],
+      infos: [{ duration: 20, hasAudio: true, width: 1920, height: 1080 } as any],
+    });
+    expect(result.ext).toBe("mp4");
+    expect(result.args).toContain("-ss");
+    expect(result.args).toContain("2");
+    expect(result.args).toContain("-t");
+    expect(result.args).toContain("8.000");
+    const vfIndex = result.args.indexOf("-vf");
+    expect(vfIndex).toBeGreaterThan(-1);
+    expect(result.args[vfIndex + 1]).toContain("setpts=PTS/2");
+    expect(result.args[vfIndex + 1]).toContain("hflip");
+    const afIndex = result.args.indexOf("-af");
+    expect(afIndex).toBeGreaterThan(-1);
+    expect(result.args[afIndex + 1]).toContain("atempo=2");
+  });
+
+  it("consolidated audio-studio builds format, volume, and fade filters", () => {
+    const tool = getTool("audio-studio");
+    const defaults = getDefaults(tool);
+    const result = tool.build({
+      values: { ...defaults, format: "mp3", volume: 1.5, fadeIn: 2, fadeOut: 2, start: 0, end: 10 },
+      inputs: ["track.wav"],
+      infos: [{ duration: 10, hasAudio: true } as any],
+    });
+    expect(result.ext).toBe("mp3");
+    const afIndex = result.args.indexOf("-af");
+    expect(afIndex).toBeGreaterThan(-1);
+    expect(result.args[afIndex + 1]).toContain("volume=1.5");
+    expect(result.args[afIndex + 1]).toContain("afade=t=in:st=0:d=2");
+    expect(result.args[afIndex + 1]).toContain("afade=t=out");
+  });
+
+  it("consolidated image-studio generates filters and quality", () => {
+    const tool = getTool("image-studio");
+    const defaults = getDefaults(tool);
+    const result = tool.build({
+      values: { ...defaults, format: "webp", quality: 80, filter: "bw", maxWidth: 1200, stripMeta: true },
+      inputs: ["photo.png"],
+      infos: [],
+    });
+    expect(result.ext).toBe("webp");
+    expect(result.args).toContain("-map_metadata");
+    expect(result.args).toContain("-1");
+    const vfIndex = result.args.indexOf("-vf");
+    expect(vfIndex).toBeGreaterThan(-1);
+    expect(result.args[vfIndex + 1]).toContain("hue=s=0");
+    expect(result.args[vfIndex + 1]).toContain("scale='if(gt(max(iw,ih),1200)");
   });
 
   it("changeValue updates values map immutably", () => {
