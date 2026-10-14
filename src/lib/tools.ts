@@ -242,38 +242,44 @@ const ID_PRESETS: Preset[] = [
   {
     value: "1inch-white",
     label: "一寸白底",
-    hint: "25×35mm · JPG ≤200KB",
-    values: { spec: "1inch", bg: "white", format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
+    hint: "25×35mm · 单张电子版",
+    values: { spec: "1inch", bg: "white", layout: "single", cutline: true, format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
   },
   {
     value: "1inch-blue",
     label: "一寸蓝底",
-    hint: "25×35mm · JPG ≤200KB",
-    values: { spec: "1inch", bg: "blue", format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
+    hint: "25×35mm · 单张电子版",
+    values: { spec: "1inch", bg: "blue", layout: "single", cutline: true, format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
   },
   {
     value: "1inch-red",
     label: "一寸红底",
-    hint: "25×35mm · JPG ≤200KB",
-    values: { spec: "1inch", bg: "red", format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
+    hint: "25×35mm · 单张电子版",
+    values: { spec: "1inch", bg: "red", layout: "single", cutline: true, format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
   },
   {
     value: "2inch-white",
     label: "二寸白底",
-    hint: "35×49mm · JPG ≤200KB",
-    values: { spec: "2inch", bg: "white", format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
+    hint: "35×49mm · 单张电子版",
+    values: { spec: "2inch", bg: "white", layout: "single", cutline: true, format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
   },
   {
     value: "2inch-red",
     label: "二寸红底",
-    hint: "35×49mm · JPG ≤200KB",
-    values: { spec: "2inch", bg: "red", format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
+    hint: "35×49mm · 单张电子版",
+    values: { spec: "2inch", bg: "red", layout: "single", cutline: true, format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
   },
   {
     value: "passport",
     label: "护照白底",
-    hint: "33×48mm · JPG ≤200KB",
-    values: { spec: "passport", bg: "white", format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
+    hint: "33×48mm · 单张电子版",
+    values: { spec: "passport", bg: "white", layout: "single", cutline: true, format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
+  },
+  {
+    value: "1inch-print6",
+    label: "一寸6寸相纸",
+    hint: "10张冲印排版 · 带裁切线",
+    values: { spec: "1inch", bg: "white", layout: "print6", cutline: true, format: "jpg", maxKB: "0", zoom: 100, offsetY: 0 },
   },
 ];
 
@@ -1004,6 +1010,26 @@ export const TOOLS: ToolDef[] = [
         options: Object.entries(ID_BG).map(([value, b]) => ({ label: b.label, value })),
       },
       {
+        key: "layout",
+        label: "排列排版",
+        type: "chips",
+        default: "single",
+        options: [
+          { label: "单张照（无排版）", value: "single" },
+          { label: "4 张排版 (2×2)", value: "2x2" },
+          { label: "8 张冲印 (2×4)", value: "2x4" },
+          { label: "9 宫格 (3×3)", value: "3x3" },
+          { label: "6寸相纸满铺 (冲印专用)", value: "print6" },
+        ],
+      },
+      {
+        key: "cutline",
+        label: "添加裁切辅助虚线（方便手工剪裁）",
+        type: "checkbox",
+        default: true,
+        visibleWhen: (v) => (str(v, "layout") || "single") !== "single",
+      },
+      {
         key: "zoom",
         label: "人像缩放",
         type: "range",
@@ -1031,7 +1057,7 @@ export const TOOLS: ToolDef[] = [
         type: "select",
         default: "jpg",
         options: [
-          { label: "JPG（可限制文件大小）", value: "jpg" },
+          { label: "JPG（通用图片）", value: "jpg" },
           { label: "PNG（无损透明通道）", value: "png" },
         ],
       },
@@ -1047,14 +1073,23 @@ export const TOOLS: ToolDef[] = [
           { label: "200 KB (考试报名常用)", value: "200" },
           { label: "300 KB", value: "300" },
         ],
-        visibleWhen: (v) => str(v, "format") === "jpg",
+        visibleWhen: (v) => str(v, "format") === "jpg" && (str(v, "layout") || "single") === "single",
       },
     ],
     outputHint: (values) => {
       const spec = specOf(str(values, "spec"));
       const px = specPx(spec);
       const bg = ID_BG[str(values, "bg")]?.label ?? "白底";
-      return `输出 ${spec.label} ${spec.wMm}×${spec.hMm}mm · ${px.w}×${px.h} 像素（300dpi 标准）· ${bg}`;
+      const layout = str(values, "layout") || "single";
+      const layoutMap: Record<string, string> = {
+        single: `单张 ${px.w}×${px.h}px`,
+        "2x2": "4张排版 (2×2)",
+        "2x4": "8张冲印排版 (2×4)",
+        "3x3": "9张九宫格 (3×3)",
+        print6: "6寸相纸标准冲印 (1800×1200px 满铺)",
+      };
+      const layoutDesc = layoutMap[layout] ?? "单张";
+      return `规格：${spec.label} ${spec.wMm}×${spec.hMm}mm · 排列：${layoutDesc} · 底色：${bg}（300dpi 标准）`;
     },
     preprocess: (file, values) =>
       makeIdPhoto(file, {
@@ -1062,6 +1097,8 @@ export const TOOLS: ToolDef[] = [
         bg: str(values, "bg"),
         zoom: num(values, "zoom"),
         offsetY: num(values, "offsetY"),
+        layout: (str(values, "layout") as any) || "single",
+        cutline: values["cutline"] !== false,
         format: str(values, "format") === "png" ? "png" : "jpg",
         maxKB: Number(str(values, "maxKB")) || 0,
       }),

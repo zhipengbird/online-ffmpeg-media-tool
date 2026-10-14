@@ -50,6 +50,8 @@ export function specPx(spec: IdSpec): { w: number; h: number } {
   return { w: mmToPx(spec.wMm), h: mmToPx(spec.hMm) };
 }
 
+export type IdPhotoLayout = "single" | "2x2" | "2x4" | "3x3" | "print6";
+
 export interface IdPhotoOptions {
   spec: string;
   bg: string;
@@ -57,6 +59,10 @@ export interface IdPhotoOptions {
   zoom: number;
   /** 人物上下位置 -30 ~ 30（%），正数人物在画面中越靠下 */
   offsetY: number;
+  /** 排列排版模式：单张 | 2x2 | 2x4 | 3x3 | 6寸相纸 */
+  layout?: IdPhotoLayout;
+  /** 是否绘制裁切辅助线（仅排版模式有效） */
+  cutline?: boolean;
   format: "jpg" | "png";
   /** 文件大小上限（KB），0 表示不限制；仅对 JPG 生效 */
   maxKB: number;
@@ -217,21 +223,30 @@ export async function makeIdPhoto(file: File, opts: IdPhotoOptions): Promise<Fil
   octx.imageSmoothingQuality = "high";
   octx.drawImage(src, sx, sy, bw, bh, 0, 0, px.w, px.h);
 
-  // 5. 编码
+  // 5. 排列排版（单张 / 2x2 / 2x4 / 3x3 / 6寸相纸）
+  const finalCanvas = arrangeIdPhotoCanvas(
+    out,
+    opts.layout ?? "single",
+    opts.cutline !== false
+  );
+
+  // 6. 编码
   const isPng = opts.format === "png";
   const ext = isPng ? "png" : "jpg";
   const mime = isPng ? "image/png" : "image/jpeg";
+  const isSingle = !opts.layout || opts.layout === "single";
   let blob: Blob;
+
   if (isPng) {
-    blob = await canvasToBlob(out, mime);
-  } else if (opts.maxKB > 0) {
+    blob = await canvasToBlob(finalCanvas, mime);
+  } else if (opts.maxKB > 0 && isSingle) {
     const limit = opts.maxKB * 1024;
     let lo = 0.3;
     let hi = 0.95;
     let best: Blob | null = null;
     for (let i = 0; i < 9; i++) {
       const q = (lo + hi) / 2;
-      const b = await canvasToBlob(out, mime, q);
+      const b = await canvasToBlob(finalCanvas, mime, q);
       if (b.size <= limit) {
         best = b;
         lo = q;
@@ -244,8 +259,122 @@ export async function makeIdPhoto(file: File, opts: IdPhotoOptions): Promise<Fil
     }
     blob = best;
   } else {
-    blob = await canvasToBlob(out, mime, 0.92);
+    blob = await canvasToBlob(finalCanvas, mime, isSingle ? 0.92 : 0.95);
   }
 
-  return new File([blob], `${stem(file.name)}.${ext}`, { type: mime });
+  const suffix = isSingle ? "" : `_${opts.layout}`;
+  return new File([blob], `${stem(file.name)}${suffix}.${ext}`, { type: mime });
+}
+
+/**
+ * 将单张证件照排版到相纸画布上（2x2、2x4、3x3 或 6寸相纸）
+ */
+export function arrangeIdPhotoCanvas(
+  singleCanvas: HTMLCanvasElement,
+  layout: IdPhotoLayout,
+  cutline: boolean
+): HTMLCanvasElement {
+  if (layout === "single") return singleCanvas;
+
+  const sw = singleCanvas.width;
+  const sh = singleCanvas.height;
+
+  // 间距与留白（按 300DPI 毫米计算：2mm 间距，4mm 边距）
+  const gapPx = Math.max(8, mmToPx(2));
+  const marginPx = Math.max(16, mmToPx(4));
+
+  if (layout === "print6") {
+    // 6 寸标准相纸（152.4mm × 101.6mm @ 300DPI -> 1800 × 1200 像素）
+    const paperW = 1800;
+    const paperH = 1200;
+
+    // 分别计算横放与竖放相纸哪种能容纳更多张数
+    const calcFit = (pw: number, ph: number) => {
+      const availW = pw - marginPx * 2;
+      const availH = ph - marginPx * 2;
+      const cols = Math.max(1, Math.floor((availW + gapPx) / (sw + gapPx)));
+      const rows = Math.max(1, Math.floor((availH + gapPx) / (sh + gapPx)));
+      return { cols, rows, total: cols * rows, pw, ph };
+    };
+
+    const fitL = calcFit(paperW, paperH);
+    const fitP = calcFit(paperH, paperW);
+    const fit = fitL.total >= fitP.total ? fitL : fitP;
+
+    const sheet = makeCanvas(fit.pw, fit.ph);
+    const sctx = sheet.getContext("2d");
+    if (!sctx) throw new Error("浏览器不支持 Canvas 2D");
+
+    // 相纸白色背景
+    sctx.fillStyle = "#ffffff";
+    sctx.fillRect(0, 0, fit.pw, fit.ph);
+
+    // 整体网格居中
+    const gridW = fit.cols * sw + (fit.cols - 1) * gapPx;
+    const gridH = fit.rows * sh + (fit.rows - 1) * gapPx;
+    const startX = Math.round((fit.pw - gridW) / 2);
+    const startY = Math.round((fit.ph - gridH) / 2);
+
+    for (let r = 0; r < fit.rows; r++) {
+      for (let c = 0; c < fit.cols; c++) {
+        const x = startX + c * (sw + gapPx);
+        const y = startY + r * (sh + gapPx);
+        sctx.drawImage(singleCanvas, x, y, sw, sh);
+
+        if (cutline) {
+          sctx.save();
+          sctx.strokeStyle = "#94a3b8"; // 浅灰裁切虚线
+          sctx.lineWidth = 1;
+          sctx.setLineDash([8, 8]);
+          sctx.strokeRect(x - 0.5, y - 0.5, sw + 1, sh + 1);
+          sctx.restore();
+        }
+      }
+    }
+    return sheet;
+  }
+
+  let cols = 1;
+  let rows = 1;
+  if (layout === "2x2") {
+    cols = 2;
+    rows = 2;
+  } else if (layout === "2x4") {
+    cols = 4;
+    rows = 2;
+  } else if (layout === "3x3") {
+    cols = 3;
+    rows = 3;
+  } else {
+    return singleCanvas;
+  }
+
+  const totalW = cols * sw + (cols - 1) * gapPx + marginPx * 2;
+  const totalH = rows * sh + (rows - 1) * gapPx + marginPx * 2;
+
+  const sheet = makeCanvas(totalW, totalH);
+  const sctx = sheet.getContext("2d");
+  if (!sctx) throw new Error("浏览器不支持 Canvas 2D");
+
+  sctx.fillStyle = "#ffffff";
+  sctx.fillRect(0, 0, totalW, totalH);
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = marginPx + c * (sw + gapPx);
+      const y = marginPx + r * (sh + gapPx);
+      sctx.drawImage(singleCanvas, x, y, sw, sh);
+
+      if (cutline) {
+        sctx.save();
+        sctx.strokeStyle = "#94a3b8";
+        sctx.lineWidth = 1;
+        sctx.setLineDash([8, 8]);
+        sctx.strokeRect(x - 0.5, y - 0.5, sw + 1, sh + 1);
+        sctx.restore();
+      }
+    }
+  }
+
+  return sheet;
 }

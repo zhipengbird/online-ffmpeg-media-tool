@@ -212,4 +212,22 @@ describe("Tool Registry & Schema", () => {
       expect(next[field.key]).toBe("custom_val");
     }
   });
+
+  it("id-photo tool provides layout configuration and formats outputHint accurately", () => {
+    const tool = getTool("id-photo");
+    const defaults = getDefaults(tool);
+    expect(defaults["layout"]).toBe("single");
+    expect(defaults["cutline"]).toBe(true);
+
+    const layoutField = tool.fields.find((f) => f.key === "layout");
+    expect(layoutField).toBeDefined();
+    expect(layoutField?.options?.some((o) => o.value === "2x4")).toBe(true);
+    expect(layoutField?.options?.some((o) => o.value === "print6")).toBe(true);
+
+    const hintSingle = tool.outputHint?.(defaults);
+    expect(hintSingle).toContain("单张");
+
+    const hintPrint = tool.outputHint?.({ ...defaults, layout: "print6" });
+    expect(hintPrint).toContain("6寸相纸标准冲印");
+  });
 });
