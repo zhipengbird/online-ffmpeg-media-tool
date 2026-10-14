@@ -44,11 +44,15 @@
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  表现层  components/*  Sidebar · FileDropZone · FieldControl │
-│                        ResultPanel                           │
+│                        BatchDropZone · BatchResults          │
+│                        MergeStitchPanel · ResultPanel        │
 ├──────────────────────────────────────────────────────────────┤
-│  控制层  App.tsx   工具选择 · 参数状态 · 任务调度 · 结果管理    │
+│  控制层  App.tsx + hooks/useMediaRunner.ts                   │
+│          工具选择 · 参数状态 · 单文件/批量队列调度 · 结果管理  │
 ├──────────────────────────────────────────────────────────────┤
-│  领域层  lib/tools.ts   23 个工具的定义、参数表单与命令生成      │
+│  领域层  lib/tools.ts   12 个场景化超级工具定义与管道构建     │
+│          lib/idphoto.ts 证件照启发式抠图、换底与冲印排版     │
+│          lib/textwatermark.ts Canvas 离线水印图层生成        │
 ├──────────────────────────────────────────────────────────────┤
 │  服务层  lib/ffmpeg.ts  核心加载 · 任务队列 · 媒体探测 · 文件读写 │
 ├──────────────────────────────────────────────────────────────┤
@@ -93,25 +97,34 @@ ffmpeg.ts  ── postMessage({id,type,data}) ──▶ ffmpeg.worker.ts
 
 ```
 src/
-├── App.tsx                  主界面：工具选择、参数 Map、任务状态、结果 URL 生命周期
+├── App.tsx                  主界面：工作区布局、侧边栏、移动端抽屉、主题集成
 ├── main.tsx                 React 入口（StrictMode）
 ├── index.css                Tailwind 入口
 ├── vite-env.d.ts            Vite 类型声明（支持 ?raw / ?url / ?worker）
+├── hooks/
+│   └── useMediaRunner.ts    执行控制层：单文件/批量/多图拼接状态管理、文件探测、取消与执行调度
 ├── lib/
 │   ├── ffmpeg.ts            FFmpeg 服务层：加载、队列、探测、运行、取消
 │   ├── ffmpeg.worker.ts     Worker 脚本：加载核心、执行命令、文件读写
-│   └── tools.ts             工具注册表：字段定义 + build() 命令生成
+│   ├── idphoto.ts           证件照算法：启发式抠图、换底、300DPI 裁剪与多排版相纸冲印（Canvas）
+│   ├── textwatermark.ts     水印图层算法：Canvas 离线渲染高质透明 PNG 水印
+│   └── tools.ts             12 项场景化超级工具注册表：字段定义 + build() 命令管道生成
 ├── components/
-│   ├── Sidebar.tsx          左侧分类导航
-│   ├── FileDropZone.tsx     文件选择 / 拖拽 / 媒体信息标签
-│   ├── FieldControl.tsx     参数控件（select / number / range / checkbox）
-│   └── ResultPanel.tsx      输出预览、下载、链式处理
+│   ├── Sidebar.tsx          左侧工作站分类导航
+│   ├── FileDropZone.tsx     单文件选择 / 拖拽 / 媒体信息标签
+│   ├── BatchDropZone.tsx    批量多文件上传与管理列表
+│   ├── BatchResults.tsx     批量处理结果队列（媒体感知缩略图、单项内联播放器、全屏模态预览）
+│   ├── MergeStitchPanel.tsx 多图横纵拼接素材列表（拖拽加图、排序、删除、清空）
+│   ├── FieldControl.tsx     参数控件（select / number / range / checkbox / chips / presets / color）
+│   ├── MobileDrawer.tsx     移动端 Apple 风格底抽屉导航
+│   ├── ThemeToggle.tsx      浅色 / 跟着系统 / 深色无闪烁切换按钮
+│   └── ResultPanel.tsx      单文件输出预览、即时播放、下载、链式处理
 └── utils/
-    ├── format.ts            formatBytes / formatTime / extOf / stem
-    └── cn.ts                模板自带的 className 合并工具（当前未使用）
+    ├── format.ts            formatBytes / formatTime / extOf / stem 边界安全格式化
+    └── theme.ts             三态主题系统与 localStorage 同步
 ```
 
-依赖方向：`components → App → lib/tools → (types) → lib/ffmpeg → worker`，UI 层不直接接触 WASM。
+依赖方向：`components → App / useMediaRunner → lib/tools → (types) → lib/ffmpeg → worker`，UI 层不直接接触 WASM。
 
 ---
 
@@ -172,82 +185,64 @@ interface ToolDef {
 
 **预设机制**：`presets` 类型字段的每个预设包含一组 `values`。选中预设时，`changeValue()` 一次性写入这些参数；修改任一参数后，`syncPresets()` 会自动把预设字段设为与当前参数匹配的预设，否则设为 `"custom"`。`getDefaults()` 默认套用第一个预设（或 `default` 指定的预设）的参数。
 
-**批量处理**：`ToolDef.multiple = true` 时，输入区切换为 `BatchDropZone`，文件列表保存在 `App` 的 `batch: BatchItem[]` 状态中（`lib/batch.ts`），每项包含 `file / info / probing / status / progress / result / error`。处理流程 `handleBatchRun()`：
+**批量处理**：`ToolDef.multiple = true` 时，输入区切换为 `BatchDropZone`，支持多文件批量上传与队列化处理。当前已全面覆盖 `video-transcode`（多视频压制）、`audio-studio`（多音频转码剪辑）、`image-studio`（多图压缩与调色）、`id-photo`（多照片换底排版）、`image-crop`（多图统一裁剪）与 `image-watermark`（多图共享 Logo/文字批量加水印）。处理流程由 `hooks/useMediaRunner.ts` 集中管理：
 
 1. `resetBatchItems()` 清空旧结果并释放旧 Blob URL；
-2. 按顺序对每项调用 `tool.build({ values, inputs: [name], infos: [info] })`，因此 `build()` 无需感知批量，仍只处理单文件；
+2. 按顺序对每项调用 `tool.build({ values, inputs: [name], infos: [info] })`，因此 `build()` 无需感知批量，仍专注单文件命令生成；
 3. 每项独立 `runFFmpeg()`，成功写入 `result`（Blob URL），失败写入 `error` 并继续下一项；
 4. 通过 `runIdRef` 判断任务是否被取消，取消时正在处理的项标记为 `cancelled`；
-5. `BatchResults` 展示逐项状态与总体进度，`downloadAll()` 通过 `fetch(blobURL)` 取回数据，使用 `utils/download.ts` 的 `zipFiles()`（JSZip）打包并 `downloadBlob()` 下载。
+5. `BatchResults` 针对不同媒体类型呈现富交互：
+   - **智能缩略图**：视频渲染首帧并叠加 `▶` 播放角标，音频展示唱片音符图标，图片展示真实画面；
+   - **单任务极速内联播放器**：单项完成时直接在顶部展开交互式 `<video controls>` 播放器与体积对比，无需额外点击；
+   - **全屏模态预览**：每项均提供「▶ 播放 / ▶ 试听 / 🔍 预览」按钮，点击弹出全屏大模态框，支持全屏播放、进度调节与键盘 ESC 快捷关闭；
+   - **ZIP 打包导出**：`downloadAll()` 通过 `zipFiles()` 将批次文件无损归档为 ZIP 压缩包下载。
 
-添加或移除文件会清空已有结果（避免结果与输入不对应）。新增支持批量的工具时，只需在 `ToolDef` 中设置 `multiple: true`。
+**多图横纵拼接流水线（`image-merge`）**：
+- `ToolDef.mergeList: true`：输入区呈现 `MergeStitchPanel`，支持添加 2~30 张任意多格式图片；
+- 用户可在面板中通过拖拽或「↑ 上移」「↓ 下移」按钮自由调整拼接次序，支持单张移除与一键清空；
+- `build()` 接收动态 `inputs: string[]`，构建动态 FFmpeg `filter_complex` 管道：
+  - 纵向长图：所有图片 `scale=size:-2` 统一宽度，通过 `vstack=inputs=N[out]` 上下无缝拼接；
+  - 横向卷轴：所有图片 `scale=-2:size` 统一高度，通过 `hstack=inputs=N[out]` 左右对齐拼接。
 
-**前置处理（preprocess）**：`ToolDef.preprocess?: (file, values) => Promise<File>` 允许在 FFmpeg 执行前用 Canvas 等浏览器能力处理输入。`App.tsx` 的单文件与批量两条执行路径都会先调用它，返回的 `File` 作为 FFmpeg 的真正输入，其扩展名决定 `inputN.ext` 的格式。证件照即采用此机制。
+**前置处理（preprocess）**：`ToolDef.preprocess?: (file, values) => Promise<File>` 允许在 FFmpeg 执行前用 Canvas 等浏览器能力处理输入。单文件与批量两条执行路径都会先调用它，返回的 `File` 作为 FFmpeg 的真正输入。
 
 **证件照流水线（`lib/idphoto.ts`）**：
 
 1. `createImageBitmap` 解码，缩放到最长边 ≤ 1200px，先铺白底（使透明区域也被视为背景）；
 2. `findBackground()`：取顶边与左右上半部边缘像素的中位数作为背景色，从这些边缘出发做 BFS 泛洪（4 邻域，容差 42 的 RGB 欧氏距离），得到背景掩码。**刻意不从底边出发**，避免把底部衣服误判为背景；
-3. 掩码区域替换为目标底色；
-4. 按规格宽高比（mm 比例）取最大居中裁剪框，再按 `zoom`（≥1）缩小裁剪框、按 `offsetY` 平移（正数使人物更靠下），裁剪结果绘制到 `mmToPx(mm) = round(mm / 25.4 × 300)` 的像素尺寸；
-5. JPG 且设置了大小上限时，在 0.3 ～ 0.95 之间二分搜索 `canvas.toBlob` 质量，取满足上限的最高质量；无法满足时抛出中文错误；
-6. FFmpeg 端 `id-photo` 的 `build()` 仅做无损封装（`-c:v copy`），避免二次有损编码。
+3. 掩码区域替换为白 / 蓝 / 红目标底色；
+4. 按规格宽高比（mm 比例）取最大居中裁剪框，再按 `zoom`（≥1）缩小裁剪框、按 `offsetY` 垂直平移，裁剪结果绘制到 `mmToPx(mm) = round(mm / 25.4 × 300)` 像素尺寸；
+5. **排版打印与冲印画布（`arrangeIdPhotoCanvas`）**：
+   - `single`：保持单张 300DPI 标准规范照；
+   - `2x2`（4 张）、`2x4`（8 张经典冲印）、`3x3`（9 宫格）：自动添加间距（2mm）与四周安全留白（4mm），排列于白色画布上；
+   - `print6`（6 寸冲印相纸 1800×1200 像素 @ 300DPI）：算法自动计算横放与竖放的排版容量上限（如一寸满铺 10 张、二寸满铺 4 张），并居中对齐；
+   - **裁切辅助虚线**：开启 `cutline` 时，在照片四周绘制浅灰辅助线（`#94a3b8`，8px 步长），方便手工精确剪裁；
+6. 编码与体积控制：单张 JPG 且设置大小上限时，在 0.3 ～ 0.95 之间二分搜索 `canvas.toBlob` 质量；排版模式自动以 0.95 高清质量输出，文件名自动增加规格后缀（如 `photo_2x4.jpg`）。
 
-该方案无需额外模型，离线可用，但**只适合单一背景**。若需要复杂背景或白衣场景的高质量抠图，应引入人像分割模型（如 MediaPipe Selfie Segmentation 或 IMG.LY 背景移除），并将模型文件随应用内嵌，以保持无外部依赖。
+**叠加图层（overlay）**：`ToolDef.overlay?: (main, values) => Promise<File>` 用于需要由 Canvas 生成辅助图层的工具。`prepareInputs(tool, files, values)` 统一完成输入准备：每个文件先经 `preprocess`，再追加 `overlay` 生成的图层。
 
-**新增图片工具的约定**：`image-crop`、`image-filter`、`image-border`、`image-strip-meta` 等单输入工具设置 `multiple: true` 即可支持批量；`image-watermark` 是水印统一工具：`inputCount` 按水印类型决定输入数（文字模式 1 张、图片模式 2 张），批量时第二张图作为所有图片共享的 Logo，支持批量；`image-merge` 使用双输入 `filter_complex`，不支持批量。`inputCount` 与 `optionsFor`（选项随参数变化，如图片模式不提供平铺）由 `App.tsx` 和 `normalizeOptions()` 统一处理。图片编码统一由 `encodeArgs(format, quality)` 生成，`imageOutput()` 在其基础上加入 `-i` 与 `-vf`。
+水印工具（`lib/textwatermark.ts`）即采用此机制：
+- 文字模式由 Canvas 离线绘制带透明通道的高清 PNG，字号基于主图宽度百分比自适应，支持字体加粗、透明度、旋转角、投影与平铺；
+- 平铺模式下生成全图等大网格，FFmpeg 使用 `overlay=0:0`；指定角标位置时生成精准外接框，FFmpeg 使用边距公式精确定位；
+- 图片 Logo 模式支持任意格式 Logo 图片，可调整缩放百分比（10%~50%）与边距，无偏移贴合。
 
-**叠加图层（overlay）**：`ToolDef.overlay?: (main, values) => Promise<File>` 用于需要由 Canvas 生成辅助图层的工具。`prepareInputs(tool, files, values)`（`lib/tools.ts`）统一完成输入准备：每个文件先经 `preprocess`，再追加 `overlay` 生成的图层，因此 `build()` 总是按 `[主图, 图层]` 的顺序接收输入。单文件与批量两条执行路径都调用它，行为一致。
+### 4.4 `hooks/useMediaRunner.ts` —— 媒体执行控制层
 
-水印工具的文字模式即采用此机制（`lib/textwatermark.ts`）：
+将核心调度逻辑从页面组件中解耦：
+- **状态管理**：集中管理 `slots`（单文件槽位）、`batch`（批量队列）、`mergeFiles`（多图拼接列表）、`running`、`progress` 与 `result`；
+- **文件探测与输入校验**：调用 `probeMedia()` 提取音视频元数据，使用 `matchesAccept()` 进行多级 MIME 校验；
+- **并发互斥与安全取消**：递增 `runIdRef` 使过期异步任务静默失效，通过 `terminateFFmpeg()` 中止 Worker 实例；
+- **内存安全**：管理 Blob URL 生命周期，及时 `URL.revokeObjectURL()` 防止内存泄露。
 
-- Canvas 绘制带透明通道的 PNG，使用系统字体栈（PingFang SC、Microsoft YaHei、Noto Sans CJK SC 等），支持多行、旋转、阴影、透明度与加粗；
-- 字号以图片宽度百分比计算，因此批量时各图自动适配；
-- 普通位置时图层为文字外接框，FFmpeg 使用 `overlay=<位置>` 叠加；平铺时图层与主图等大，以斜向网格重复绘制，FFmpeg 使用 `overlay=0:0`；
-- **不把 CJK 字体打包进应用**，以控制体积。代价是中文显示依赖用户设备安装的字体，缺少中文字体时会显示为方框，这一点已在用户说明书中注明。
+### 4.5 表现层组件
 
-**输出说明**：`ToolDef.outputHint(values, infos)` 可返回面向用户的说明文字（例如图片压缩的预估输出尺寸），由 `App.tsx` 显示在参数区下方。图片尺寸规划由 `planResize(values, info)` 统一负责，同时生成 `-vf` 滤镜和说明文字，避免两处逻辑不一致。
-
-`build()` 的输入：
-
-- `values`：当前参数值
-- `inputs`：虚拟文件名数组（`input0.mp4`、`input1.mp3` ...）
-- `infos`：每个输入的 `MediaInfo`（时长、是否有音轨等），用于动态决策，例如"视频变速"在无音轨时跳过 `atempo` 滤镜
-
-`build()` 只返回不含输出文件名的参数，输出文件名由 `App.tsx` 统一追加为 `output.{ext}`。
-
-辅助函数：
-
-- `atempoChain(speed)`：将任意速度拆分为 `atempo` 链（单个 `atempo` 仅支持 0.5～2.0）。
-- `videoContainer / audioEncoder / imageOutput`：根据目标格式返回对应的编码器参数，供多个工具复用。
-- `EVEN` 滤镜：`scale=trunc(iw/2)*2:trunc(ih/2)*2`，保证 yuv420p 编码所需的偶数宽高。
-
-### 4.4 `App.tsx` —— 控制层
-
-关键状态：
-
-| 状态 | 类型 | 说明 |
-| --- | --- | --- |
-| `toolId` | `string` | 当前工具 |
-| `slots` | `Slot[]` | 每个输入槽位的 `{file, info, probing}` |
-| `valuesMap` | `Record<toolId, Values>` | 每个工具的参数独立保存，切换工具不丢失 |
-| `running / progress` | `boolean / number` | 任务状态与进度 |
-| `result` | `ResultData \| null` | 输出结果（含 Blob URL） |
-| `coreMsg / coreError` | `string` | 核心加载状态与错误信息 |
-| `runIdRef` | `number` (ref) | 任务代号，用于忽略已取消任务的回调 |
-
-要点：
-
-- **取消机制**：`handleCancel` 先递增 `runIdRef`，使旧任务的回调全部失效，再调用 `terminateFFmpeg()`。
-- **Blob URL 释放**：`useEffect` 在 `result` 变化时释放旧 URL，避免内存泄漏。
-- **日志节流**：日志先写入 `logBufRef`，每 400 ms 批量刷新到 React 状态，防止高频日志导致界面卡顿。
-- **启动预加载**：挂载时调用 `ensureFFmpeg`，失败时在顶部显示错误并提供"重试"。
-
-### 4.5 组件
-
-- `FileDropZone`：支持点击选择与拖拽；选择文件后自动调用 `probeMedia`，展示时长、分辨率、音视频轨标签。
-- `FieldControl`：根据 `Field.type` 渲染对应控件，纯展示组件，无副作用。
-- `ResultPanel`：根据输出 MIME 类型选择 `<video>` / `<audio>` / `<img>` 预览，并计算体积变化比例。"作为输入继续处理"区域列出 `chainTargets`（单输入且 `accept` 与输出文件匹配的工具），点击后 `useResultAs(toolId)` 切换工具并载入文件。
+- `Sidebar` & `MobileDrawer`：桌面端双栏工作站侧边栏与移动端 Apple 风格底部弹出抽屉；
+- `FileDropZone` & `BatchDropZone`：单文件 / 批量拖拽上传与媒体信息状态展示；
+- `MergeStitchPanel`：多图拼接素材管理面板，支持实时拖拽加图、上下排序与单张删除；
+- `FieldControl`：动态参数渲染器，支持 `chips`（按钮组）、`presets`（常用预设卡片）、`select`、`range`、`checkbox` 等；
+- `BatchResults`：多媒体批量结果呈现，支持媒体类型感知缩略图、单项即时播放器、全屏模态框预览与 ZIP 归档下载；
+- `ResultPanel`：单文件多媒体内置播放器、画质与体积压缩率对比、下载与链式接力处理；
+- `ThemeToggle`：无缝集成浅色、跟随系统、深色三态切换。
 
 **类型校验**：`utils/accept.ts` 的 `matchesAccept(accept, file)` 按 `<input accept>` 的语法（扩展名 `.mp4`、MIME 前缀 `video/*`、完整 MIME）判断文件是否合法。`handleFile()` 与 `addBatchFiles()` 在载入前校验，拖拽文件同样生效（拖拽不受 `<input accept>` 限制）。
 
