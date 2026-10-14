@@ -28,6 +28,20 @@ function getMediaKind(item: BatchItem): "video" | "audio" | "image" {
 export default function BatchResults({ items, running, onError }: Props) {
   const [zipping, setZipping] = useState(false);
   const [previewItem, setPreviewItem] = useState<BatchItem | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+
+  // 当 items 产生新的 done 项时，自动选中新完成的项
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const it of items) {
+        if (it.status === "done" && it.result && !prev.has(it.id)) {
+          next.add(it.id);
+        }
+      }
+      return next;
+    });
+  }, [items]);
 
   // 监听 ESC 键关闭预览弹窗
   useEffect(() => {
@@ -42,6 +56,7 @@ export default function BatchResults({ items, running, onError }: Props) {
 
   const finished = items.filter((i) => i.status === "done" || i.status === "error" || i.status === "cancelled").length;
   const doneItems = items.filter((i) => i.status === "done" && i.result);
+  const selectedDoneItems = doneItems.filter((i) => selectedIds.has(i.id));
   const failed = items.filter((i) => i.status === "error").length;
   const runningItem = items.find((i) => i.status === "running");
   const overall = items.length
@@ -53,25 +68,53 @@ export default function BatchResults({ items, running, onError }: Props) {
   const outTotal = doneItems.reduce((s, i) => s + (i.result?.size ?? 0), 0);
   const savedPct = inTotal > 0 ? Math.round((1 - outTotal / inTotal) * 100) : 0;
 
-  async function downloadAll() {
-    if (zipping || doneItems.length === 0) return;
+  const allSelected = doneItems.length > 0 && selectedDoneItems.length === doneItems.length;
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(doneItems.map((i) => i.id)));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  async function downloadTargets(targets: BatchItem[], zipName: string) {
+    if (zipping || targets.length === 0) return;
     setZipping(true);
     try {
       const entries = await Promise.all(
-        doneItems.map(async (i) => {
+        targets.map(async (i) => {
           const r = i.result!;
           const blob = await fetch(r.url).then((res) => res.blob());
           return { name: r.name, blob };
         })
       );
       const zip = await zipFiles(entries);
-      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-      downloadBlob(zip, `batch-${stamp}-${doneItems.length}.zip`);
+      downloadBlob(zip, zipName);
     } catch (e) {
       onError(`打包失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setZipping(false);
     }
+  }
+
+  async function downloadAll() {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    await downloadTargets(doneItems, `batch-all-${stamp}-${doneItems.length}.zip`);
+  }
+
+  async function downloadSelected() {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    await downloadTargets(selectedDoneItems, `batch-selected-${stamp}-${selectedDoneItems.length}.zip`);
   }
 
   // 唯一单项完成时的媒体类型
@@ -103,7 +146,17 @@ export default function BatchResults({ items, running, onError }: Props) {
       {/* 汇总结果条 */}
       {doneItems.length > 0 && (
         <div className="animate-pop-in flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3 dark:border-emerald-800/60 dark:bg-emerald-950/20">
-          <div className="flex flex-wrap gap-3 text-sm text-slate-700 dark:text-slate-200">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-700 dark:text-slate-200">
+            <label className="flex items-center gap-1.5 cursor-pointer select-none font-medium text-xs text-slate-600 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleSelectAll}
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>全选 ({selectedDoneItems.length}/{doneItems.length})</span>
+            </label>
+            <span className="text-slate-300 dark:text-slate-700">|</span>
             <span>
               成功 <b className="text-emerald-700 dark:text-emerald-400">{doneItems.length}</b> 个
             </span>
@@ -119,14 +172,26 @@ export default function BatchResults({ items, running, onError }: Props) {
               </span>
             </span>
           </div>
-          <button
-            type="button"
-            onClick={downloadAll}
-            disabled={zipping || running}
-            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-emerald-200 transition-all hover:bg-emerald-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600 dark:shadow-none dark:hover:bg-emerald-500"
-          >
-            {zipping ? "⏳ 打包中…" : `📦 打包下载 ZIP（${doneItems.length}）`}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedDoneItems.length > 0 && selectedDoneItems.length < doneItems.length && (
+              <button
+                type="button"
+                onClick={downloadSelected}
+                disabled={zipping || running}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {zipping ? "⏳ 打包中…" : `📦 下载选中项 ZIP（${selectedDoneItems.length}）`}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={downloadAll}
+              disabled={zipping || running}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-emerald-200 transition-all hover:bg-emerald-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600 dark:shadow-none dark:hover:bg-emerald-500"
+            >
+              {zipping ? "⏳ 打包中…" : `📦 打包全部 ZIP（${doneItems.length}）`}
+            </button>
+          </div>
         </div>
       )}
 
@@ -174,7 +239,18 @@ export default function BatchResults({ items, running, onError }: Props) {
 
           return (
             <li key={it.id} className="flex items-center gap-3 px-3 py-2.5">
-              <span className="tabular-nums w-6 shrink-0 text-center text-xs text-slate-400 dark:text-slate-500">{idx + 1}</span>
+              {r ? (
+                <label className="flex h-5 w-5 shrink-0 items-center justify-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(it.id)}
+                    onChange={() => toggleSelect(it.id)}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                </label>
+              ) : (
+                <span className="tabular-nums w-5 shrink-0 text-center text-xs text-slate-400 dark:text-slate-500">{idx + 1}</span>
+              )}
 
               {/* 缩略图区域：根据媒体类型安全渲染，彻底解决视频 URL 被 img 标签渲染为裂图的问题 */}
               <div
@@ -319,6 +395,7 @@ export default function BatchResults({ items, running, onError }: Props) {
                   src={previewItem.result.url}
                   controls
                   autoPlay
+                  preload="auto"
                   playsInline
                   className="max-h-[65vh] w-full rounded-xl bg-black"
                 />
