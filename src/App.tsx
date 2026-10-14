@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CATEGORIES,
   TOOLS,
@@ -19,6 +19,7 @@ import ThemeToggle from "./components/ThemeToggle";
 import MobileDrawer from "./components/MobileDrawer";
 import { useTheme } from "./utils/theme";
 import { useMediaRunner } from "./hooks/useMediaRunner";
+import VideoTimelineHelper from "./components/VideoTimelineHelper";
 
 export default function App() {
   const { theme, setTheme } = useTheme();
@@ -38,6 +39,12 @@ export default function App() {
   const tool = getTool(toolId);
   const [valuesMap, setValuesMap] = useState<Record<string, Values>>({});
   const values: Values = valuesMap[tool.id] ?? getDefaults(tool);
+
+  // #3 auto-scroll to result + #9 elapsed time
+  const resultRef = useRef<HTMLDivElement>(null);
+  const startTimeRef = useRef(0);
+  const [elapsed, setElapsed] = useState(0);
+  const prevRunning = useRef(false);
 
   const {
     slots,
@@ -70,6 +77,35 @@ export default function App() {
     setError,
   } = useMediaRunner(tool, values, (newId) => setToolId(newId));
 
+  // #3 auto-scroll: when running finishes, scroll to result
+  useEffect(() => {
+    if (prevRunning.current && !running) {
+      // finished
+      setElapsed(Math.round((Date.now() - startTimeRef.current) / 100) / 10);
+      setTimeout(() => {
+        resultRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 100);
+    }
+    if (!prevRunning.current && running) {
+      // just started
+      startTimeRef.current = Date.now();
+      setElapsed(0);
+    }
+    prevRunning.current = running;
+  }, [running]);
+
+  // #10 keyboard shortcut: Ctrl/⌘ + Enter to start
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canRun && !running) {
+        e.preventDefault();
+        handleStart();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [canRun, running, handleStart]);
+
   function selectTool(id: string) {
     if (running || id === toolId) return;
     const t = getTool(id);
@@ -83,6 +119,11 @@ export default function App() {
       return { ...prev, [tool.id]: changeValue(tool, cur, key, v) };
     });
   }
+
+  // #12 reset parameters to defaults
+  const resetValues = useCallback(() => {
+    setValuesMap((prev) => ({ ...prev, [tool.id]: getDefaults(tool) }));
+  }, [tool]);
 
   const categoryLabel = CATEGORIES.find((c) => c.id === tool.category)?.label ?? "";
   const visibleFields = tool.fields
@@ -272,9 +313,30 @@ export default function App() {
             </div>
           )}
 
+          {tool.id === "video-edit" && slots[0].file && (
+            <VideoTimelineHelper
+              file={slots[0].file}
+              info={slots[0].info}
+              start={typeof values.start === "number" ? values.start : Number(values.start) || 0}
+              end={typeof values.end === "number" ? values.end : Number(values.end) || 0}
+              onChangeStart={(v) => setValue("start", v)}
+              onChangeEnd={(v) => setValue("end", v)}
+            />
+          )}
+
           {visibleFields.length > 0 && (
             <div className="mt-8">
-              <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">处理参数</h3>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">处理参数</h3>
+                <button
+                  type="button"
+                  onClick={resetValues}
+                  className="rounded-md px-2.5 py-1 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 active:scale-95 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                  title="恢复默认参数（快捷键 Ctrl+R）"
+                >
+                  ↺ 重置默认
+                </button>
+              </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 {visibleFields.map((f) => (
                   <div
@@ -372,14 +434,17 @@ export default function App() {
             </div>
           )}
 
-          {!tool.multiple && result && (
-            <ResultPanel
-              result={result}
-              currentToolId={tool.id}
-              targets={chainTargets}
-              onUseAsInput={useResultAs}
-            />
-          )}
+          <div ref={resultRef}>
+            {!tool.multiple && result && (
+              <ResultPanel
+                result={result}
+                currentToolId={tool.id}
+                targets={chainTargets}
+                onUseAsInput={useResultAs}
+                elapsed={elapsed}
+              />
+            )}
+          </div>
 
           {logs.length > 0 && (
             <details className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-950/50">

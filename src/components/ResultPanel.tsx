@@ -17,9 +17,11 @@ interface Props {
   /** 能够接收该输出文件作为输入的工具列表 */
   targets: ToolDef[];
   onUseAsInput: (toolId: string) => void;
+  /** 处理耗时（秒） */
+  elapsed?: number;
 }
 
-export default function ResultPanel({ result, currentToolId, targets, onUseAsInput }: Props) {
+export default function ResultPanel({ result, currentToolId, targets, onUseAsInput, elapsed }: Props) {
   const kind = result.mime.split("/")[0];
   const ratio = result.inputSize > 0 ? Math.round((result.size / result.inputSize) * 100) : 0;
   const smaller = result.size < result.inputSize;
@@ -47,6 +49,11 @@ export default function ResultPanel({ result, currentToolId, targets, onUseAsInp
           >
             输出 {formatBytes(result.size)}（{ratio}%）
           </span>
+          {elapsed != null && elapsed > 0 && (
+            <span className="tabular-nums rounded-md bg-slate-100 px-2 py-1 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">
+              ⏱ 耗时 {elapsed}s
+            </span>
+          )}
         </div>
       </div>
 
