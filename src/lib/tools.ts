@@ -57,7 +57,7 @@ export interface ToolDef {
   inputLabels: string[];
   fields: Field[];
   build: (ctx: BuildContext) => BuildResult;
-  outputHint?: (values: Values, infos: (MediaInfo | null)[]) => string;
+  outputHint?: (values: Values, infos?: (MediaInfo | null)[]) => string;
   multiple?: boolean;
   mergeList?: boolean;
   preprocess?: (file: File, values: Values) => Promise<File>;
@@ -513,10 +513,6 @@ export const TOOLS: ToolDef[] = [
       filters.push(EVEN);
 
       const c = videoContainer(fmt, crf);
-      const audioArgs = values.mute === true ? ["-an"] : c.args.filter((a, idx, arr) => {
-        // 保留音频编码参数
-        return true;
-      });
 
       return {
         args: [
@@ -635,18 +631,45 @@ export const TOOLS: ToolDef[] = [
       TIME_FIELD("duration", "持续时长", 5, "0 = 整个视频（可能很大）"),
       { key: "fps", label: "帧率 (FPS)", type: "range", default: 12, min: 1, max: 30, hint: "越高越流畅、体积越大" },
       { key: "width", label: "输出宽度", type: "number", default: 480, min: 16, max: 1920, unit: "px", hint: "高度按比例自动计算" },
+      {
+        key: "loopMode",
+        label: "循环模式",
+        type: "chips",
+        default: "infinite",
+        options: [
+          { label: "无限循环 (标准)", value: "infinite" },
+          { label: "乒乓反弹 (正放+倒放)", value: "boomerang" },
+          { label: "单次播放", value: "once" },
+        ],
+      },
     ],
+    outputHint: (values) => {
+      const mode = str(values, "loopMode");
+      const modeLabel = mode === "boomerang" ? " · 乒乓反弹动效" : mode === "once" ? " · 仅播一次" : " · 无限循环";
+      return `输出 GIF：${Math.round(num(values, "width"))}px 宽 · ${num(values, "fps")} FPS${modeLabel}`;
+    },
     build: ({ values, inputs }) => {
       const start = num(values, "start");
       const dur = num(values, "duration");
+      const fps = num(values, "fps");
+      const width = Math.round(num(values, "width"));
+      const loopMode = str(values, "loopMode");
+
       const args = ["-ss", String(start)];
       if (dur > 0) args.push("-t", String(dur));
-      args.push(
-        "-i",
-        inputs[0],
-        "-vf",
-        `fps=${num(values, "fps")},scale=${Math.round(num(values, "width"))}:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer`
-      );
+      args.push("-i", inputs[0]);
+
+      let vf: string;
+      if (loopMode === "boomerang") {
+        vf = `fps=${fps},scale=${width}:-1:flags=lanczos[base];[base]split[f][r];[r]reverse[rr];[f][rr]concat=n=2:v=1[merged];[merged]split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer`;
+      } else {
+        vf = `fps=${fps},scale=${width}:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer`;
+      }
+
+      args.push("-vf", vf);
+      const loopArg = loopMode === "once" ? "-1" : "0";
+      args.push("-loop", loopArg);
+
       return { args, ext: "gif", mime: "image/gif" };
     },
   },
@@ -814,6 +837,20 @@ export const TOOLS: ToolDef[] = [
       TIME_FIELD("start", "开始时间", 0, "0 = 从开头开始"),
       TIME_FIELD("end", "结束时间", 0, "0 = 截取到结尾"),
       {
+        key: "speed",
+        label: "播放倍速",
+        type: "chips",
+        default: "1",
+        options: [
+          { label: "0.5x 慢放", value: "0.5" },
+          { label: "0.75x", value: "0.75" },
+          { label: "1x 原速", value: "1" },
+          { label: "1.25x 快放", value: "1.25" },
+          { label: "1.5x", value: "1.5" },
+          { label: "2x 双倍", value: "2" },
+        ],
+      },
+      {
         key: "volume",
         label: "音量增益",
         type: "select",
@@ -834,7 +871,9 @@ export const TOOLS: ToolDef[] = [
     outputHint: (values) => {
       const vol = num(values, "volume");
       const volStr = vol !== 1 ? ` · 音量 ${Math.round(vol * 100)}%` : "";
-      return `输出音频：${str(values, "format").toUpperCase()} · ${str(values, "bitrate")}${volStr}`;
+      const sp = Number(str(values, "speed")) || 1;
+      const spStr = sp !== 1 ? ` · ${sp}x 变速` : "";
+      return `输出音频：${str(values, "format").toUpperCase()} · ${str(values, "bitrate")}${volStr}${spStr}`;
     },
     build: ({ values, inputs, infos }) => {
       const start = num(values, "start");
@@ -849,6 +888,11 @@ export const TOOLS: ToolDef[] = [
       }
 
       const filters: string[] = [];
+      const sp = Number(str(values, "speed")) || 1;
+      if (sp !== 1) {
+        filters.push(atempoChain(sp));
+      }
+
       const vol = num(values, "volume");
       if (vol !== 1) filters.push(`volume=${vol}`);
 
@@ -858,7 +902,8 @@ export const TOOLS: ToolDef[] = [
       const fadeOut = num(values, "fadeOut");
       if (fadeOut > 0) {
         if (dur === null) throw new Error("设置淡出效果需要明确结束时间或源文件包含时长信息");
-        filters.push(`afade=t=out:st=${Math.max(0, dur - fadeOut).toFixed(3)}:d=${fadeOut}`);
+        const actualDur = dur / sp;
+        filters.push(`afade=t=out:st=${Math.max(0, actualDur - fadeOut).toFixed(3)}:d=${fadeOut}`);
       }
 
       const args = ["-ss", String(start), "-i", inputs[0]];
@@ -900,16 +945,51 @@ export const TOOLS: ToolDef[] = [
       { ...QUALITY_FIELD, visibleWhen: IMG_QUALITY_VISIBLE },
       {
         key: "maxWidth",
-        label: "长边尺寸限制",
+        label: "尺寸缩放调整",
         type: "select",
         default: "1080",
         options: [
           { label: "保持原图尺寸 (不缩放)", value: "0" },
           { label: "限制 2560px (2K 超清)", value: "2560" },
           { label: "限制 1920px (1080P 全高清)", value: "1920" },
+          { label: "限制 1200px (网页配图)", value: "1200" },
           { label: "限制 1080px (微信/社交配图推荐)", value: "1080" },
           { label: "限制 800px (邮件/缩略图)", value: "800" },
+          { label: "🎯 自定义精确宽高像素", value: "custom" },
         ],
+      },
+      {
+        key: "customWidth",
+        label: "目标宽度 (px)",
+        type: "number",
+        default: 800,
+        min: 0,
+        max: 8000,
+        unit: "px",
+        hint: "0 = 自动按高度等比缩放",
+        visibleWhen: (v) => str(v, "maxWidth") === "custom",
+      },
+      {
+        key: "customHeight",
+        label: "目标高度 (px)",
+        type: "number",
+        default: 600,
+        min: 0,
+        max: 8000,
+        unit: "px",
+        hint: "0 = 自动按宽度等比缩放",
+        visibleWhen: (v) => str(v, "maxWidth") === "custom",
+      },
+      {
+        key: "fitMode",
+        label: "缩放适配策略",
+        type: "chips",
+        default: "fit",
+        options: [
+          { label: "等比缩放 (适应框内)", value: "fit" },
+          { label: "强制拉伸到指定宽高", value: "stretch" },
+        ],
+        visibleWhen: (v) => str(v, "maxWidth") === "custom",
       },
       {
         key: "rotate",
@@ -944,7 +1024,14 @@ export const TOOLS: ToolDef[] = [
     ],
     outputHint: (values) => {
       const maxW = str(values, "maxWidth");
-      const maxWStr = maxW !== "0" ? ` · 最大边 ${maxW}px` : " · 保持原分辨率";
+      let maxWStr = "";
+      if (maxW === "custom") {
+        const cw = num(values, "customWidth");
+        const ch = num(values, "customHeight");
+        maxWStr = ` · 自定义 ${cw || "auto"}×${ch || "auto"}px`;
+      } else {
+        maxWStr = maxW !== "0" ? ` · 最大边 ${maxW}px` : " · 保持原分辨率";
+      }
       const metaStr = values.stripMeta === true ? " · 已擦除隐私元数据" : "";
       return `输出图片：${str(values, "format").toUpperCase()} (质量 ${num(values, "quality")})${maxWStr}${metaStr}`;
     },
@@ -959,10 +1046,28 @@ export const TOOLS: ToolDef[] = [
       else if (rot === "hflip") vf.push("hflip");
       else if (rot === "vflip") vf.push("vflip");
 
-      // 2. 长边尺寸缩放限制（保持比例，不放大）
-      const maxW = num(values, "maxWidth");
-      if (maxW > 0) {
-        vf.push(`scale='if(gt(max(iw,ih),${maxW}),if(gt(iw,ih),${maxW},-2),iw)':'if(gt(max(iw,ih),${maxW}),if(gt(iw,ih),-2,${maxW}),ih)'`);
+      // 2. 尺寸缩放
+      const maxWVal = str(values, "maxWidth");
+      if (maxWVal === "custom") {
+        const cw = Math.round(num(values, "customWidth"));
+        const ch = Math.round(num(values, "customHeight"));
+        const fit = str(values, "fitMode");
+        if (cw > 0 && ch > 0) {
+          if (fit === "stretch") {
+            vf.push(`scale=${cw}:${ch}`);
+          } else {
+            vf.push(`scale='if(gt(a,${cw}/${ch}),${cw},-2)':'if(gt(a,${cw}/${ch}),-2,${ch})'`);
+          }
+        } else if (cw > 0) {
+          vf.push(`scale=${cw}:-2`);
+        } else if (ch > 0) {
+          vf.push(`scale=-2:${ch}`);
+        }
+      } else {
+        const maxW = num(values, "maxWidth");
+        if (maxW > 0) {
+          vf.push(`scale='if(gt(max(iw,ih),${maxW}),if(gt(iw,ih),${maxW},-2),iw)':'if(gt(max(iw,ih),${maxW}),if(gt(iw,ih),-2,${maxW}),ih)'`);
+        }
       }
 
       // 3. 滤镜风格
@@ -1370,10 +1475,10 @@ export const TOOLS: ToolDef[] = [
 
       const scale = num(values, "scale") / 100;
       let posExpr = "x=(W-w)/2:y=(H-h)/2";
-      if (pos === "lt") posExpr = "x=W*${margin}:y=H*${margin}".replace(/\$\{margin\}/g, String(margin));
-      else if (pos === "rt") posExpr = "x=W*(1-${margin})-w:y=H*${margin}".replace(/\$\{margin\}/g, String(margin));
-      else if (pos === "lb") posExpr = "x=W*${margin}:y=H*(1-${margin})-h".replace(/\$\{margin\}/g, String(margin));
-      else if (pos === "rb") posExpr = "x=W*(1-${margin})-w:y=H*(1-${margin})-h".replace(/\$\{margin\}/g, String(margin));
+      if (pos === "lt") posExpr = `x=W*${margin}:y=H*${margin}`;
+      else if (pos === "rt") posExpr = `x=W*(1-${margin})-w:y=H*${margin}`;
+      else if (pos === "lb") posExpr = `x=W*${margin}:y=H*(1-${margin})-h`;
+      else if (pos === "rb") posExpr = `x=W*(1-${margin})-w:y=H*(1-${margin})-h`;
 
       const fc = `[1:v]scale=iw*${scale}:-1,format=rgba,colorchannelmixer=aa=${op}[wm];[0:v][wm]overlay=${posExpr}[out]`;
       return {
@@ -1416,6 +1521,29 @@ export const TOOLS: ToolDef[] = [
         hint: "纵向长图统一宽度，横向长图统一高度；其余维度保持原宽高比自动缩放",
       },
       {
+        key: "gap",
+        label: "拼接间距 (边距)",
+        type: "range",
+        default: 0,
+        min: 0,
+        max: 50,
+        unit: "px",
+        hint: "图片之间的留白间隔距离，0 为紧密无缝",
+      },
+      {
+        key: "bgColor",
+        label: "间距底色",
+        type: "select",
+        default: "white",
+        options: [
+          { label: "纯白底色 (白色留白)", value: "white" },
+          { label: "纯黑底色 (暗黑对比)", value: "black" },
+          { label: "浅灰底色", value: "#f1f5f9" },
+          { label: "透明底色 (推荐 PNG/WebP)", value: "transparent" },
+        ],
+        visibleWhen: (v) => num(v, "gap") > 0,
+      },
+      {
         key: "format",
         label: "输出格式",
         type: "select",
@@ -1432,11 +1560,18 @@ export const TOOLS: ToolDef[] = [
       const isVertical = str(values, "direction") === "v";
       const dirText = isVertical ? "上下纵向长图" : "左右横向长图";
       const dimText = isVertical ? `统一宽度 ${num(values, "size")}px` : `统一高度 ${num(values, "size")}px`;
-      return `拼接模式：${dirText} · ${dimText} · 输出 ${str(values, "format").toUpperCase()}`;
+      const gap = num(values, "gap");
+      const gapText = gap > 0 ? ` · 留白 ${gap}px` : "";
+      const isJpgTrans = gap > 0 && str(values, "bgColor") === "transparent" && str(values, "format") === "jpg";
+      const warnText = isJpgTrans ? "（⚠️ JPG不支持透明通道将呈黑底，建议选PNG/WebP）" : "";
+      return `拼接模式：${dirText} · ${dimText}${gapText} · 输出 ${str(values, "format").toUpperCase()}${warnText}`;
     },
     build: ({ values, inputs }) => {
       const s = Math.max(16, Math.round(num(values, "size")));
       const isVertical = str(values, "direction") === "v";
+      const gap = Math.max(0, Math.round(num(values, "gap")));
+      const bg = str(values, "bgColor");
+      const padColor = bg === "transparent" ? "black@0.0" : bg === "white" ? "white" : bg === "black" ? "black" : "0xf1f5f9";
       const n = inputs.length;
       if (n < 2) throw new Error("多图拼接至少需要 2 张图片");
 
@@ -1447,13 +1582,15 @@ export const TOOLS: ToolDef[] = [
 
       let fc = "";
       if (isVertical) {
-        // 纵向长图：统一宽度为 s，高度缩放到偶数，统一像素格式 rgba 防止色域错乱
-        const scaleParts = inputs.map((_, i) => `[${i}:v]scale=${s}:-2,format=rgba[v${i}]`).join(";");
+        // 纵向长图：统一宽度为 s，高度缩放到偶数，若有间距在非末尾图底部补齐 gap
+        const padSuffix = (i: number) => (gap > 0 && i < n - 1 ? `,pad=iw:ih+${gap}:0:0:color=${padColor}` : "");
+        const scaleParts = inputs.map((_, i) => `[${i}:v]scale=${s}:-2,format=rgba${padSuffix(i)}[v${i}]`).join(";");
         const stackInputs = inputs.map((_, i) => `[v${i}]`).join("");
         fc = `${scaleParts};${stackInputs}vstack=inputs=${n}[out]`;
       } else {
-        // 横向长图：统一高度为 s，宽度缩放到偶数，统一像素格式 rgba
-        const scaleParts = inputs.map((_, i) => `[${i}:v]scale=-2:${s},format=rgba[v${i}]`).join(";");
+        // 横向长图：统一高度为 s，宽度缩放到偶数，若有间距在非末尾图右侧补齐 gap
+        const padSuffix = (i: number) => (gap > 0 && i < n - 1 ? `,pad=iw+${gap}:ih:0:0:color=${padColor}` : "");
+        const scaleParts = inputs.map((_, i) => `[${i}:v]scale=-2:${s},format=rgba${padSuffix(i)}[v${i}]`).join(";");
         const stackInputs = inputs.map((_, i) => `[v${i}]`).join("");
         fc = `${scaleParts};${stackInputs}hstack=inputs=${n}[out]`;
       }

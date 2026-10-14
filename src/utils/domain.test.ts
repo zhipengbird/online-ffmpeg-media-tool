@@ -224,10 +224,86 @@ describe("Tool Registry & Schema", () => {
     expect(layoutField?.options?.some((o) => o.value === "2x4")).toBe(true);
     expect(layoutField?.options?.some((o) => o.value === "print6")).toBe(true);
 
-    const hintSingle = tool.outputHint?.(defaults);
+    const hintSingle = tool.outputHint?.(defaults, []);
     expect(hintSingle).toContain("单张");
 
-    const hintPrint = tool.outputHint?.({ ...defaults, layout: "print6" });
+    const hintPrint = tool.outputHint?.({ ...defaults, layout: "print6" }, []);
     expect(hintPrint).toContain("6寸相纸标准冲印");
   });
+
+  it("video-gif supports infinite, once, and boomerang loop modes", () => {
+    const tool = getTool("video-gif");
+    const defaults = getDefaults(tool);
+
+    // 标准循环
+    const resInf = tool.build({
+      values: { ...defaults, loopMode: "infinite", width: 480, fps: 10 },
+      inputs: ["clip.mp4"],
+      infos: [],
+    });
+    expect(resInf.ext).toBe("gif");
+    expect(resInf.args).toContain("-loop");
+    expect(resInf.args[resInf.args.indexOf("-loop") + 1]).toBe("0");
+
+    // 乒乓反弹模式
+    const resBoom = tool.build({
+      values: { ...defaults, loopMode: "boomerang", width: 360, fps: 12 },
+      inputs: ["clip.mp4"],
+      infos: [],
+    });
+    const vfBoom = resBoom.args[resBoom.args.indexOf("-vf") + 1];
+    expect(vfBoom).toContain("reverse");
+    expect(vfBoom).toContain("concat=n=2:v=1");
+  });
+
+  it("audio-studio supports playback speed control via atempoChain", () => {
+    const tool = getTool("audio-studio");
+    const defaults = getDefaults(tool);
+
+    const resFast = tool.build({
+      values: { ...defaults, speed: "1.5" },
+      inputs: ["speech.mp3"],
+      infos: [{ duration: 60 } as any],
+    });
+    const af = resFast.args[resFast.args.indexOf("-af") + 1];
+    expect(af).toContain("atempo=1.5");
+  });
+
+  it("image-merge supports gap and background color padding", () => {
+    const tool = getTool("image-merge");
+    const defaults = getDefaults(tool);
+
+    const resWithGap = tool.build({
+      values: { ...defaults, direction: "v", gap: 20, bgColor: "white" },
+      inputs: ["img1.png", "img2.png"],
+      infos: [],
+    });
+    const fc = resWithGap.args[resWithGap.args.indexOf("-filter_complex") + 1];
+    expect(fc).toContain("pad=iw:ih+20:0:0:color=white");
+  });
+
+  it("image-studio supports exact custom width/height and stretch/fit mode", () => {
+    const tool = getTool("image-studio");
+    const defaults = getDefaults(tool);
+
+    // 等比适应
+    const resFit = tool.build({
+      values: { ...defaults, maxWidth: "custom", customWidth: 1000, customHeight: 800, fitMode: "fit" },
+      inputs: ["sample.jpg"],
+      infos: [],
+    });
+    const vfFit = resFit.args[resFit.args.indexOf("-vf") + 1];
+    expect(vfFit).toContain("scale=");
+    expect(vfFit).toContain("1000/800");
+
+    // 强制拉伸
+    const resStretch = tool.build({
+      values: { ...defaults, maxWidth: "custom", customWidth: 600, customHeight: 400, fitMode: "stretch" },
+      inputs: ["sample.jpg"],
+      infos: [],
+    });
+    const vfStretch = resStretch.args[resStretch.args.indexOf("-vf") + 1];
+    expect(vfStretch).toContain("scale=600:400");
+  });
 });
+
