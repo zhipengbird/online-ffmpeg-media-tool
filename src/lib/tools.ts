@@ -81,8 +81,11 @@ const PHOTO_ACCEPT = "image/*,.png,.jpg,.jpeg,.webp,.bmp,.gif";
 const EVEN = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
 const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i;
 
-const num = (v: Values, k: string) => Number(v[k]);
-const str = (v: Values, k: string) => String(v[k]);
+const num = (v: Values, k: string, def = 0) => {
+  const val = Number(v[k]);
+  return Number.isFinite(val) ? val : def;
+};
+const str = (v: Values, k: string, def = "") => (v[k] !== undefined && v[k] !== null ? String(v[k]) : def);
 
 const X264 = (crf: number) => [
   "-c:v",
@@ -1298,15 +1301,19 @@ export const TOOLS: ToolDef[] = [
     overlay: (main, values) => {
       if (imageMode(values)) return Promise.resolve(null);
       return renderTextWatermark(main, {
-        text: str(values, "text"),
-        position: str(values, "position"),
-        sizePct: num(values, "size"),
-        color: str(values, "color"),
-        opacityPct: num(values, "opacity"),
-        rotateDeg: num(values, "rotate"),
+        text: str(values, "text", "© 版权所有 请勿盗用"),
+        position: str(values, "position", "tile"),
+        size: num(values, "size", 4),
+        sizePct: num(values, "size", 4),
+        color: str(values, "color", "#ffffff"),
+        opacity: num(values, "opacity", 40),
+        opacityPct: num(values, "opacity", 40),
+        rotate: num(values, "rotate", 0),
+        rotateDeg: num(values, "rotate", 0),
         bold: values.bold === true,
-        shadow: values.shadow === true,
-        marginPct: num(values, "margin"),
+        shadow: values.shadow !== false,
+        margin: num(values, "margin", 3),
+        marginPct: num(values, "margin", 3),
       });
     },
     build: ({ values, inputs }) => {

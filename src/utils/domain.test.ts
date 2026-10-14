@@ -172,6 +172,37 @@ describe("Tool Registry & Schema", () => {
     expect(vfArgH).toContain("[3:v]scale=-2:720,format=rgba[v3]");
   });
 
+  it("image-watermark generates valid overlay pipeline for text and image modes", async () => {
+    const tool = getTool("image-watermark");
+    const defaults = getDefaults(tool);
+
+    // 文字水印模式
+    const textRes = tool.build({
+      values: { ...defaults, mode: "text", text: "测试水印", position: "tile" },
+      inputs: ["photo.jpg", "watermark.png"],
+      infos: [],
+    });
+    expect(textRes.args).toContain("-filter_complex");
+    const textVf = textRes.args[textRes.args.indexOf("-filter_complex") + 1];
+    expect(textVf).toContain("[1:v]format=rgba[wm]");
+    expect(textVf).toContain("[0:v][wm]overlay=0:0:format=auto[out]");
+
+    // 图片 Logo 模式
+    const imgRes = tool.build({
+      values: { ...defaults, mode: "image", position: "rb", scale: 25, margin: 5 },
+      inputs: ["photo.jpg", "logo.png"],
+      infos: [],
+    });
+    const imgVf = imgRes.args[imgRes.args.indexOf("-filter_complex") + 1];
+    expect(imgVf).toContain("scale=iw*0.25:-1");
+    expect(imgVf).toContain("overlay=x=W*(1-0.05)-w:y=H*(1-0.05)-h[out]");
+
+    // overlay 钩子在图片模式下返回 null
+    const dummyFile = new File(["dummy"], "test.png", { type: "image/png" });
+    const nullOverlay = await tool.overlay!(dummyFile, { ...defaults, mode: "image" });
+    expect(nullOverlay).toBeNull();
+  });
+
   it("changeValue updates values map immutably", () => {
     const tool = TOOLS[0];
     const initial = getDefaults(tool);
