@@ -329,12 +329,6 @@ const TEXT_WM_PRESETS: Preset[] = [
     hint: "平铺 · 防止挪作他用",
     values: { text: "仅供办理使用\n请勿他用", position: "tile", size: 3.5, color: "#ffffff", opacity: 40, bold: false, shadow: true, rotate: -25 },
   },
-  {
-    value: "custom",
-    label: "自定义",
-    hint: "手动设置下方各项参数",
-    values: {},
-  },
 ];
 
 const VIDEO_TRANSCODE_PRESETS: Preset[] = [

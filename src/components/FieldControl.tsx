@@ -90,10 +90,11 @@ export default function FieldControl({ field, value, onChange }: Props) {
   }
 
   if (field.type === "presets") {
-    const cards: { value: string; label: string; hint?: string }[] = [
-      ...(field.presets ?? []),
-      { value: "custom", label: "自定义", hint: "手动设置下方各项参数" },
-    ];
+    const list = field.presets ?? [];
+    const hasCustom = list.some((p) => p.value === "custom");
+    const cards: { value: string; label: string; hint?: string }[] = hasCustom
+      ? list
+      : [...list, { value: "custom", label: "自定义", hint: "手动设置下方各项参数" }];
     return (
       <div>
         <div className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">{field.label}</div>
