@@ -136,6 +136,42 @@ describe("Tool Registry & Schema", () => {
     expect(result.args[vfIndex + 1]).toContain("scale='if(gt(max(iw,ih),1200)");
   });
 
+  it("video-transcode and audio-studio support batch processing", () => {
+    const videoTool = getTool("video-transcode");
+    expect(videoTool.multiple).toBe(true);
+
+    const audioTool = getTool("audio-studio");
+    expect(audioTool.multiple).toBe(true);
+  });
+
+  it("image-merge stitches arbitrary N images (3+) vertically and horizontally", () => {
+    const tool = getTool("image-merge");
+    expect(tool.mergeList).toBe(true);
+    const defaults = getDefaults(tool);
+
+    // 垂直拼接 3 张图
+    const resV = tool.build({
+      values: { ...defaults, direction: "v", size: 1080 },
+      inputs: ["img1.png", "img2.jpg", "img3.webp"],
+      infos: [],
+    });
+    const vfArgV = resV.args[resV.args.indexOf("-filter_complex") + 1];
+    expect(vfArgV).toContain("vstack=inputs=3[out]");
+    expect(vfArgV).toContain("[0:v]scale=1080:-2,format=rgba[v0]");
+    expect(vfArgV).toContain("[2:v]scale=1080:-2,format=rgba[v2]");
+
+    // 横向拼接 4 张图
+    const resH = tool.build({
+      values: { ...defaults, direction: "h", size: 720 },
+      inputs: ["a.png", "b.png", "c.png", "d.png"],
+      infos: [],
+    });
+    const vfArgH = resH.args[resH.args.indexOf("-filter_complex") + 1];
+    expect(vfArgH).toContain("hstack=inputs=4[out]");
+    expect(vfArgH).toContain("[0:v]scale=-2:720,format=rgba[v0]");
+    expect(vfArgH).toContain("[3:v]scale=-2:720,format=rgba[v3]");
+  });
+
   it("changeValue updates values map immutably", () => {
     const tool = TOOLS[0];
     const initial = getDefaults(tool);

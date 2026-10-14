@@ -14,6 +14,7 @@ import FieldControl from "./components/FieldControl";
 import ResultPanel from "./components/ResultPanel";
 import BatchDropZone from "./components/BatchDropZone";
 import BatchResults from "./components/BatchResults";
+import MergeStitchPanel from "./components/MergeStitchPanel";
 import ThemeToggle from "./components/ThemeToggle";
 import MobileDrawer from "./components/MobileDrawer";
 import { useTheme } from "./utils/theme";
@@ -27,7 +28,13 @@ export default function App() {
     }
     return false;
   });
-  const [toolId, setToolId] = useState(TOOLS[0].id);
+  const [toolId, setToolId] = useState(() => {
+    if (typeof window !== "undefined") {
+      const q = new URLSearchParams(window.location.search).get("tool");
+      if (q && TOOLS.some((t) => t.id === q)) return q;
+    }
+    return TOOLS[0].id;
+  });
   const tool = getTool(toolId);
   const [valuesMap, setValuesMap] = useState<Record<string, Values>>({});
   const values: Values = valuesMap[tool.id] ?? getDefaults(tool);
@@ -35,6 +42,7 @@ export default function App() {
   const {
     slots,
     batch,
+    mergeFiles,
     running,
     progress,
     coreMsg,
@@ -50,6 +58,10 @@ export default function App() {
     addBatchFiles,
     removeBatchItem,
     clearBatch,
+    addMergeFiles,
+    removeMergeFile,
+    moveMergeFile,
+    clearMergeFiles,
     handleStart,
     handleCancel,
     retryCore,
@@ -199,14 +211,29 @@ export default function App() {
                   支持批量
                 </span>
               )}
+              {tool.mergeList && (
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:ring-blue-800">
+                  支持多图拼长图
+                </span>
+              )}
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">
                 {categoryLabel}
               </span>
             </div>
           </div>
 
-
-          {tool.multiple ? (
+          {tool.mergeList ? (
+            <div className="mt-6">
+              <MergeStitchPanel
+                items={mergeFiles}
+                disabled={running}
+                onAdd={addMergeFiles}
+                onRemove={removeMergeFile}
+                onMove={moveMergeFile}
+                onClear={clearMergeFiles}
+              />
+            </div>
+          ) : tool.multiple ? (
             <div className="mt-6">
               <BatchDropZone
                 accept={tool.accept[0]}
@@ -282,8 +309,10 @@ export default function App() {
               {running
                 ? "⏳ 处理中…"
                 : tool.multiple && batch.length > 1
-                  ? `▶ 开始批量处理（${batch.length} 张）`
-                  : "▶ 开始处理"}
+                  ? `▶ 开始批量处理（${batch.length} 个文件）`
+                  : tool.mergeList && mergeFiles.length > 1
+                    ? `▶ 开始拼接（共 ${mergeFiles.length} 张图片）`
+                    : "▶ 开始处理"}
             </button>
             {running && (
               <button
@@ -296,13 +325,19 @@ export default function App() {
             )}
             {!canRun && !running && (
               <span className="text-xs text-slate-400 dark:text-slate-500">
-                {tool.multiple
-                  ? batch.length === 0
-                    ? "请先添加图片"
-                    : "正在读取图片信息…"
-                  : tool.accept.length > 1
-                    ? "请先选择所有输入文件"
-                    : "请先选择输入文件"}
+                {tool.mergeList
+                  ? mergeFiles.length === 0
+                    ? "请添加至少 2 张待拼接图片"
+                    : mergeFiles.length === 1
+                      ? "请继续添加至少 1 张图片"
+                      : "准备就绪，点击开始拼接"
+                  : tool.multiple
+                    ? batch.length === 0
+                      ? "请先添加待处理文件"
+                      : "正在读取文件信息…"
+                    : tool.accept.length > 1
+                      ? "请先选择所有输入文件"
+                      : "请先选择输入文件"}
               </span>
             )}
           </div>

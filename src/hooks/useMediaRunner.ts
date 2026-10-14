@@ -19,6 +19,7 @@ import {
   type BatchItem,
 } from "../lib/batch";
 import type { ResultData } from "../components/ResultPanel";
+import type { MergeItem } from "../components/MergeStitchPanel";
 import { extOf, stem } from "../utils/format";
 import { matchesAccept } from "../utils/accept";
 
@@ -38,6 +39,8 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
   const [slots, setSlots] = useState<Slot[]>(() => makeSlots(tool.accept.length));
   // 批量模式的文件列表（仅 tool.multiple 为 true 时使用）
   const [batch, setBatch] = useState<BatchItem[]>([]);
+  // 多图拼接模式的文件列表（仅 tool.mergeList 为 true 时使用）
+  const [mergeFiles, setMergeFiles] = useState<MergeItem[]>([]);
 
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -65,6 +68,13 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
     };
   }, []);
 
+  // 释放多图拼接的预览图 URL
+  useEffect(() => {
+    return () => {
+      for (const it of mergeFiles) URL.revokeObjectURL(it.previewUrl);
+    };
+  }, [mergeFiles]);
+
   // 启动时立即在后台加载 FFmpeg 核心；失败时在页面顶部展示原因，并允许重试
   function retryCore() {
     setCoreError("");
@@ -81,9 +91,11 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
   const inputCount = tool.inputCount ? tool.inputCount(values) : tool.accept.length;
   // 第 2 个及之后的槽位：单文件模式为普通输入；批量模式为所有图片共享的附加文件（如水印 Logo）
   const extraReady = slots.slice(1, inputCount).every((s) => s.file !== null && !s.probing);
-  const canRun = tool.multiple
-    ? batch.length > 0 && batch.every((i) => !i.probing) && extraReady
-    : slots.slice(0, inputCount).every((s) => s.file !== null && !s.probing);
+  const canRun = tool.mergeList
+    ? mergeFiles.length >= 2 && !running
+    : tool.multiple
+      ? batch.length > 0 && batch.every((i) => !i.probing) && extraReady
+      : slots.slice(0, inputCount).every((s) => s.file !== null && !s.probing);
 
   function startLogTimer() {
     if (logTimerRef.current) clearInterval(logTimerRef.current);
@@ -103,6 +115,8 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
   function resetForTool(newTool: ToolDef) {
     revokeBatchResults(batch);
     setBatch([]);
+    for (const it of mergeFiles) URL.revokeObjectURL(it.previewUrl);
+    setMergeFiles([]);
     setSlots(makeSlots(newTool.accept.length));
     setResult(null);
     setError("");
@@ -145,7 +159,9 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
   async function handleRun() {
     if (running || !canRun) return;
     const runId = ++runIdRef.current;
-    const files = slots.slice(0, inputCount).map((s) => s.file as File);
+    const files = tool.mergeList
+      ? mergeFiles.map((m) => m.file)
+      : slots.slice(0, inputCount).map((s) => s.file as File);
 
     setRunning(true);
     setProgress(0);
@@ -159,7 +175,7 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
       // 统一生成 FFmpeg 输入：前置处理（证件照）+ 叠加图层（文字水印）
       const sources = await prepareInputs(tool, files, values);
       const names = sources.map((f, i) => `input${i}.${extOf(f.name)}`);
-      const plan = tool.build({ values, inputs: names, infos: slots.map((s) => s.info) });
+      const plan = tool.build({ values, inputs: names, infos: tool.mergeList ? [] : slots.map((s) => s.info) });
       const outputName = `output.${plan.ext}`;
 
       const data = await runFFmpeg({
@@ -180,7 +196,9 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
       if (runIdRef.current !== runId) return;
 
       const blob = new Blob([new Uint8Array(data)], { type: plan.mime });
-      const name = `${stem(files[0].name)}-${tool.id}.${plan.ext}`;
+      const name = tool.mergeList
+        ? `merged-${Date.now()}.${plan.ext}`
+        : `${stem(files[0].name)}-${tool.id}.${plan.ext}`;
       const outFile = new File([blob], name, { type: plan.mime });
       setResult({
         url: URL.createObjectURL(blob),
@@ -188,7 +206,7 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
         name,
         mime: plan.mime,
         size: blob.size,
-        inputSize: files[0].size,
+        inputSize: files.reduce((sum, f) => sum + f.size, 0),
       });
       setCoreReady(true);
       setProgress(1);
@@ -210,7 +228,8 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
     const files = input.filter((f) => matchesAccept(t.accept[0], f));
     const rejected = input.length - files.length;
     if (rejected > 0) {
-      setError(`已忽略 ${rejected} 个不支持的文件（${t.name}仅支持图片格式）。`);
+      const typeName = t.category === "video" ? "视频" : t.category === "audio" ? "音频" : "图片";
+      setError(`已忽略 ${rejected} 个不支持的文件（${t.name}仅支持${typeName}格式）。`);
     }
     if (files.length === 0) return;
     // 文件列表变化后，之前的处理结果不再对应，需要清空
@@ -363,9 +382,54 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
     ? TOOLS.filter((t) => t.accept.length === 1 && matchesAccept(t.accept[0], result.file))
     : [];
 
+  /* ---------------- 多图拼接模式 ---------------- */
+
+  function addMergeFiles(input: File[]) {
+    if (running) return;
+    const valid = input.filter((f) => matchesAccept(tool.accept[0], f));
+    if (valid.length === 0) return;
+    const added: MergeItem[] = valid.map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      file,
+      previewUrl: URL.createObjectURL(file),
+    }));
+    setMergeFiles((prev) => [...prev, ...added]);
+    setError("");
+    setResult(null);
+  }
+
+  function removeMergeFile(id: string) {
+    if (running) return;
+    setMergeFiles((prev) => {
+      const it = prev.find((i) => i.id === id);
+      if (it) URL.revokeObjectURL(it.previewUrl);
+      return prev.filter((i) => i.id !== id);
+    });
+  }
+
+  function moveMergeFile(index: number, direction: -1 | 1) {
+    if (running) return;
+    setMergeFiles((prev) => {
+      const targetIdx = index + direction;
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+      const next = [...prev];
+      const temp = next[index];
+      next[index] = next[targetIdx];
+      next[targetIdx] = temp;
+      return next;
+    });
+  }
+
+  function clearMergeFiles() {
+    if (running) return;
+    for (const it of mergeFiles) URL.revokeObjectURL(it.previewUrl);
+    setMergeFiles([]);
+  }
+
   return {
     slots,
     batch,
+    mergeFiles,
     running,
     progress,
     coreMsg,
@@ -381,6 +445,10 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
     addBatchFiles,
     removeBatchItem,
     clearBatch,
+    addMergeFiles,
+    removeMergeFile,
+    moveMergeFile,
+    clearMergeFiles,
     handleStart,
     handleCancel,
     retryCore,

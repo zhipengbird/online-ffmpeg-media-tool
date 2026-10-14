@@ -59,6 +59,7 @@ export interface ToolDef {
   build: (ctx: BuildContext) => BuildResult;
   outputHint?: (values: Values, infos: (MediaInfo | null)[]) => string;
   multiple?: boolean;
+  mergeList?: boolean;
   preprocess?: (file: File, values: Values) => Promise<File>;
   overlay?: (main: File, values: Values) => Promise<File | null>;
   inputCount?: (values: Values) => number;
@@ -413,9 +414,10 @@ export const TOOLS: ToolDef[] = [
     category: "video",
     name: "视频转码与压制",
     icon: "🎬",
-    desc: "格式转换（MP4/WebM/MOV/MKV/AVI）、画质压缩、分辨率缩放与静音处理一站式完成。",
+    desc: "格式转换（MP4/WebM/MOV/MKV/AVI）、画质压缩、分辨率缩放与静音处理一站式完成。支持多视频文件批量压制。",
     accept: [VIDEO_ACCEPT],
     inputLabels: ["视频文件"],
+    multiple: true,
     fields: [
       { key: "preset", label: "常用预设", type: "presets", default: "balanced", presets: VIDEO_TRANSCODE_PRESETS },
       {
@@ -773,9 +775,10 @@ export const TOOLS: ToolDef[] = [
     category: "audio",
     name: "全能音频工坊",
     icon: "🎧",
-    desc: "音频格式转换、提取音轨、起止剪辑、音量调节（50%~300%）与淡入淡出一体化处理。",
+    desc: "音频格式转换、提取音轨、起止剪辑、音量调节（50%~300%）与淡入淡出一体化处理。支持批量处理。",
     accept: [MEDIA_ACCEPT],
     inputLabels: ["音频或视频文件"],
+    multiple: true,
     fields: [
       {
         key: "format",
@@ -1349,29 +1352,30 @@ export const TOOLS: ToolDef[] = [
     category: "image",
     name: "多图横纵拼接",
     icon: "🧩",
-    desc: "将两张图片左右横向或上下纵向拼接为单张长图，自动统一对齐基准尺寸。",
-    accept: [IMAGE_ACCEPT, IMAGE_ACCEPT],
-    inputLabels: ["图片 1（左 / 上）", "图片 2（右 / 下）"],
+    desc: "支持任意多张图片（2~30 张）上下纵向长图或左右横向拼接，可自定义拼接次序与对齐尺寸。",
+    accept: [IMAGE_ACCEPT],
+    inputLabels: ["拼接图片素材"],
+    mergeList: true,
     fields: [
       {
         key: "direction",
         label: "拼接方向",
         type: "chips",
-        default: "h",
+        default: "v",
         options: [
-          { label: "左右横向拼接", value: "h" },
-          { label: "上下纵向拼接", value: "v" },
+          { label: "上下纵向拼接（垂直长图）", value: "v" },
+          { label: "左右横向拼接（横向卷轴）", value: "h" },
         ],
       },
       {
         key: "size",
-        label: "基准尺寸",
+        label: "基准对齐尺寸",
         type: "number",
         default: 1080,
-        min: 16,
+        min: 64,
         max: 8000,
         unit: "px",
-        hint: "横向拼接时统一高度，纵向拼接时统一宽度",
+        hint: "纵向长图统一宽度，横向长图统一高度；其余维度保持原宽高比自动缩放",
       },
       {
         key: "format",
@@ -1379,22 +1383,46 @@ export const TOOLS: ToolDef[] = [
         type: "select",
         default: "jpg",
         options: [
-          { label: "JPG", value: "jpg" },
-          { label: "PNG（无损）", value: "png" },
-          { label: "WebP", value: "webp" },
+          { label: "JPG（通用图片）", value: "jpg" },
+          { label: "PNG（无损高清）", value: "png" },
+          { label: "WebP（高压缩比）", value: "webp" },
         ],
       },
       { ...QUALITY_FIELD, default: 92, visibleWhen: IMG_QUALITY_VISIBLE },
     ],
+    outputHint: (values) => {
+      const isVertical = str(values, "direction") === "v";
+      const dirText = isVertical ? "上下纵向长图" : "左右横向长图";
+      const dimText = isVertical ? `统一宽度 ${num(values, "size")}px` : `统一高度 ${num(values, "size")}px`;
+      return `拼接模式：${dirText} · ${dimText} · 输出 ${str(values, "format").toUpperCase()}`;
+    },
     build: ({ values, inputs }) => {
       const s = Math.max(16, Math.round(num(values, "size")));
-      const horizontal = str(values, "direction") === "h";
-      const fc = horizontal
-        ? `[0:v]scale=-2:${s}[a];[1:v]scale=-2:${s}[b];[a][b]hstack=inputs=2[out]`
-        : `[0:v]scale=${s}:-2[a];[1:v]scale=${s}:-2[b];[a][b]vstack=inputs=2[out]`;
+      const isVertical = str(values, "direction") === "v";
+      const n = inputs.length;
+      if (n < 2) throw new Error("多图拼接至少需要 2 张图片");
+
+      const inputArgs: string[] = [];
+      for (const inp of inputs) {
+        inputArgs.push("-i", inp);
+      }
+
+      let fc = "";
+      if (isVertical) {
+        // 纵向长图：统一宽度为 s，高度缩放到偶数，统一像素格式 rgba 防止色域错乱
+        const scaleParts = inputs.map((_, i) => `[${i}:v]scale=${s}:-2,format=rgba[v${i}]`).join(";");
+        const stackInputs = inputs.map((_, i) => `[v${i}]`).join("");
+        fc = `${scaleParts};${stackInputs}vstack=inputs=${n}[out]`;
+      } else {
+        // 横向长图：统一高度为 s，宽度缩放到偶数，统一像素格式 rgba
+        const scaleParts = inputs.map((_, i) => `[${i}:v]scale=-2:${s},format=rgba[v${i}]`).join(";");
+        const stackInputs = inputs.map((_, i) => `[v${i}]`).join("");
+        fc = `${scaleParts};${stackInputs}hstack=inputs=${n}[out]`;
+      }
+
       const enc = encodeArgs(str(values, "format"), num(values, "quality"));
       return {
-        args: ["-i", inputs[0], "-i", inputs[1], "-filter_complex", fc, "-map", "[out]", ...enc.args],
+        args: [...inputArgs, "-filter_complex", fc, "-map", "[out]", ...enc.args],
         ext: enc.ext,
         mime: enc.mime,
       };

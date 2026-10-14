@@ -63,8 +63,8 @@ export default function BatchResults({ items, running, onError }: Props) {
           <div className="mb-1.5 flex justify-between text-xs text-slate-500 dark:text-slate-400">
             <span>
               {running
-                ? `正在处理第 ${Math.min(finished + 1, items.length)} / ${items.length} 张…`
-                : `已完成 ${finished} / ${items.length} 张`}
+                ? `正在处理第 ${Math.min(finished + 1, items.length)} / ${items.length} 个文件…`
+                : `已完成 ${finished} / ${items.length} 个文件`}
             </span>
             <span className="tabular-nums">{Math.round(overall * 100)}%</span>
           </div>
@@ -81,11 +81,11 @@ export default function BatchResults({ items, running, onError }: Props) {
         <div className="animate-pop-in flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/50 px-4 py-3 dark:border-emerald-800/60 dark:bg-emerald-950/20">
           <div className="flex flex-wrap gap-3 text-sm text-slate-700 dark:text-slate-200">
             <span>
-              成功 <b className="text-emerald-700 dark:text-emerald-400">{doneItems.length}</b> 张
+              成功 <b className="text-emerald-700 dark:text-emerald-400">{doneItems.length}</b> 个
             </span>
             {failed > 0 && (
               <span>
-                失败 <b className="text-rose-600 dark:text-rose-400">{failed}</b> 张
+                失败 <b className="text-rose-600 dark:text-rose-400">{failed}</b> 个
               </span>
             )}
             <span className="tabular-nums">

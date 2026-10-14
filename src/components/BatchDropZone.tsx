@@ -16,6 +16,13 @@ export default function BatchDropZone({ accept, items, disabled, onAdd, onRemove
   const [dragging, setDragging] = useState(false);
   const totalSize = items.reduce((sum, it) => sum + it.file.size, 0);
 
+  const typeLabel = accept.includes("video")
+    ? "视频文件"
+    : accept.includes("audio")
+      ? "音频文件"
+      : "图片文件";
+  const unitWord = accept.includes("video") || accept.includes("audio") ? "个文件" : "张图片";
+
   const pick = () => {
     if (!disabled) inputRef.current?.click();
   };
@@ -23,7 +30,7 @@ export default function BatchDropZone({ accept, items, disabled, onAdd, onRemove
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <p className="text-sm font-medium text-slate-700 dark:text-slate-200">图片文件（支持多选批量）</p>
+        <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{typeLabel}（支持多选批量处理）</p>
         {items.length > 0 && (
           <span className="tabular-nums text-xs text-slate-500 dark:text-slate-400">
             共 {items.length} 个 · {formatBytes(totalSize)}
@@ -63,9 +70,9 @@ export default function BatchDropZone({ accept, items, disabled, onAdd, onRemove
           ➕
         </div>
         <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-          {items.length > 0 ? "继续添加图片" : "点击选择多张图片，或将图片拖拽到此处"}
+          {items.length > 0 ? `继续添加${typeLabel.slice(0, 2)}` : `点击选择多${unitWord}，或将文件拖拽到此处`}
         </p>
-        <p className="text-xs text-slate-400 dark:text-slate-500">按添加顺序依次处理；文件仅在本地浏览器中处理</p>
+        <p className="text-xs text-slate-400 dark:text-slate-500">按添加顺序依次在本地处理；文件不离开用户设备</p>
       </div>
 
       <input
