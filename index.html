@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>在线 FFmpeg 工具箱 - 视频 / 音频 / 图片处理</title>
+    <script>
+      try {
+        const p = new URLSearchParams(window.location.search).get("theme");
+        const s = localStorage.getItem("online-ffmpeg-theme");
+        const isDark = p === "dark" || (p !== "light" && (s === "dark" || (!s && window.matchMedia("(prefers-color-scheme: dark)").matches)));
+        if (isDark) document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
