@@ -39,6 +39,20 @@ export default function FileDropZone({ label, accept, file, info, probing, onFil
     />
   );
 
+  const dropHandlers = {
+    onDragOver: (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragging(true);
+    },
+    onDragLeave: () => setDragging(false),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragging(false);
+      const f = e.dataTransfer.files?.[0];
+      if (f) onFile(f);
+    },
+  };
+
   if (!file) {
     return (
       <div>
@@ -50,17 +64,7 @@ export default function FileDropZone({ label, accept, file, info, probing, onFil
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
           }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragging(false);
-            const f = e.dataTransfer.files?.[0];
-            if (f) onFile(f);
-          }}
+          {...dropHandlers}
           className={`flex min-h-[160px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-center transition-all duration-200 active:scale-[0.99] ${
             dragging
               ? "border-blue-600 bg-blue-50/70 dark:border-blue-500 dark:bg-blue-950/40"
@@ -85,7 +89,19 @@ export default function FileDropZone({ label, accept, file, info, probing, onFil
   return (
     <div>
       <p className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">{label}</p>
-      <div className="min-h-[160px] rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm transition dark:border-slate-700/80 dark:bg-slate-800/60">
+      <div
+        {...dropHandlers}
+        className={`min-h-[160px] rounded-xl border p-4 shadow-sm transition ${
+          dragging
+            ? "border-blue-500 bg-blue-50/50 ring-2 ring-blue-500/20 dark:border-blue-400 dark:bg-blue-950/30 dark:ring-blue-500/30"
+            : "border-slate-200/90 bg-white dark:border-slate-700/80 dark:bg-slate-800/60"
+        }`}
+      >
+        {dragging && (
+          <div className="mb-3 flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+            📥 松开鼠标替换当前文件
+          </div>
+        )}
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-lg text-white shadow-sm ring-1 ring-slate-800/10 dark:bg-blue-600 dark:ring-0">
             📄
