@@ -22,6 +22,7 @@ export default function VideoTimelineHelper({
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isPreviewingClip, setIsPreviewingClip] = useState(false);
 
   useEffect(() => {
     if (!file) {
@@ -36,10 +37,17 @@ export default function VideoTimelineHelper({
   }, [file]);
 
   const totalDuration = duration || (info?.duration ?? 0);
+  const effectiveEnd = end > 0 ? Math.min(end, totalDuration || end) : totalDuration;
 
   const handleTimeUpdate = () => {
     if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+      const cur = videoRef.current.currentTime;
+      setCurrentTime(cur);
+      if (isPreviewingClip && cur >= effectiveEnd) {
+        videoRef.current.pause();
+        videoRef.current.currentTime = start;
+        setIsPreviewingClip(false);
+      }
     }
   };
 
@@ -53,9 +61,22 @@ export default function VideoTimelineHelper({
   const [isScrubbing, setIsScrubbing] = useState(false);
 
   const seekTo = (t: number) => {
+    setIsPreviewingClip(false);
     if (videoRef.current) {
       videoRef.current.currentTime = Math.max(0, Math.min(t, totalDuration));
       setCurrentTime(videoRef.current.currentTime);
+    }
+  };
+
+  const handlePreviewClip = () => {
+    if (!videoRef.current) return;
+    if (isPreviewingClip) {
+      videoRef.current.pause();
+      setIsPreviewingClip(false);
+    } else {
+      setIsPreviewingClip(true);
+      videoRef.current.currentTime = start;
+      videoRef.current.play().catch(() => setIsPreviewingClip(false));
     }
   };
 
@@ -97,7 +118,6 @@ export default function VideoTimelineHelper({
 
   if (!file || !videoUrl) return null;
 
-  const effectiveEnd = end > 0 ? Math.min(end, totalDuration || end) : totalDuration;
   const clipLength = Math.max(0, effectiveEnd - start);
 
   const startPercent = totalDuration > 0 ? (Math.min(start, totalDuration) / totalDuration) * 100 : 0;
@@ -225,24 +245,41 @@ export default function VideoTimelineHelper({
             </button>
           </div>
 
-          {/* 跳转导航快捷按钮 */}
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => seekTo(start)}
-              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-slate-600 transition hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
-            >
-              ⏮ 跳到开始点 ({start.toFixed(2)}s)
-            </button>
-            {end > 0 && (
+          {/* 跳转导航与选区试看快捷按钮 */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-1 border-t border-slate-100 dark:border-slate-800/80">
+            <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => seekTo(end)}
-                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-slate-600 transition hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                onClick={() => seekTo(start)}
+                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-slate-600 transition hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                title="播放器跳转到截取开始位置"
               >
-                ⏭ 跳到结束点 ({end.toFixed(2)}s)
+                ⏮ 跳至开始 ({start.toFixed(1)}s)
               </button>
-            )}
+              {end > 0 && (
+                <button
+                  type="button"
+                  onClick={() => seekTo(end)}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-slate-600 transition hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                  title="播放器跳转到截取结束位置"
+                >
+                  ⏭ 跳至结束 ({end.toFixed(1)}s)
+                </button>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={handlePreviewClip}
+              className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold shadow-xs transition active:scale-95 ${
+                isPreviewingClip
+                  ? "bg-rose-600 text-white animate-pulse"
+                  : "bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500"
+              }`}
+              title="自动从开始点试播至结束点并暂停"
+            >
+              <span>{isPreviewingClip ? "⏹ 停止试看" : "▶ 试看所选片段"}</span>
+            </button>
           </div>
         </div>
       </div>
