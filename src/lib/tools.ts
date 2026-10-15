@@ -579,8 +579,16 @@ export const TOOLS: ToolDef[] = [
     ],
     outputHint: (values) => {
       const sp = str(values, "speed");
-      const rot = str(values, "transform") !== "none" ? " · 画面已旋转" : "";
-      return `剪切与调速：${sp}x 播放倍速${rot} · 重新编码保证帧精确度`;
+      const rot = str(values, "transform");
+      const rotMap: Record<string, string> = {
+        hflip: " · 水平镜像翻转",
+        vflip: " · 垂直翻转",
+        cw90: " · 顺时针旋转90°",
+        ccw90: " · 逆时针旋转90°",
+        r180: " · 旋转180°",
+      };
+      const rotStr = rot !== "none" ? (rotMap[rot] ?? "") : "";
+      return `MP4 格式 · ${sp}x 倍速${rotStr} · 帧精确重编码`;
     },
     build: ({ values, inputs, infos }) => {
       const start = num(values, "start");
@@ -1034,12 +1042,14 @@ export const TOOLS: ToolDef[] = [
       if (maxW === "custom") {
         const cw = num(values, "customWidth");
         const ch = num(values, "customHeight");
-        maxWStr = ` · 自定义 ${cw || "auto"}×${ch || "auto"}px`;
+        maxWStr = ` · 自定义尺寸 ${cw || "自适应"}×${ch || "自适应"}px`;
       } else {
-        maxWStr = maxW !== "0" ? ` · 最大边 ${maxW}px` : " · 保持原分辨率";
+        maxWStr = maxW !== "0" ? ` · 限制最长边 ${maxW}px` : " · 保持原图尺寸";
       }
-      const metaStr = values.stripMeta === true ? " · 已擦除隐私元数据" : "";
-      return `输出图片：${str(values, "format").toUpperCase()} (质量 ${num(values, "quality")})${maxWStr}${metaStr}`;
+      const fmt = str(values, "format").toUpperCase();
+      const qStr = ["jpg", "webp"].includes(str(values, "format")) ? ` (质量 ${num(values, "quality")})` : "";
+      const metaStr = values.stripMeta === true ? " · 剔除 Exif/GPS 隐私信息" : "";
+      return `${fmt} 格式${qStr}${maxWStr}${metaStr}`;
     },
     build: ({ values, inputs }) => {
       const vf: string[] = [];
@@ -1100,7 +1110,7 @@ export const TOOLS: ToolDef[] = [
     category: "image",
     name: "智能证件照制作",
     icon: "👔",
-    desc: "启发式人像抠图，智能替换背景为白/蓝/红底，按国家标准 300dpi 规格精确裁剪。支持批量。",
+    desc: "启发式人像抠图换底，支持白/蓝/红/高级灰及自定义底色，按国家标准 300dpi 规格与多排版精确裁剪。支持批量。",
     accept: [PHOTO_ACCEPT],
     inputLabels: ["人像照片原图"],
     multiple: true,
@@ -1581,7 +1591,7 @@ export const TOOLS: ToolDef[] = [
       const gapText = gap > 0 ? ` · 留白 ${gap}px` : "";
       const isJpgTrans = gap > 0 && str(values, "bgColor") === "transparent" && str(values, "format") === "jpg";
       const warnText = isJpgTrans ? "（⚠️ JPG不支持透明通道将呈黑底，建议选PNG/WebP）" : "";
-      return `拼接模式：${dirText} · ${dimText}${gapText} · 输出 ${str(values, "format").toUpperCase()}${warnText}`;
+      return `${dirText} · ${dimText}${gapText} · ${str(values, "format").toUpperCase()} 格式${warnText}`;
     },
     build: ({ values, inputs }) => {
       const s = Math.max(16, Math.round(num(values, "size")));

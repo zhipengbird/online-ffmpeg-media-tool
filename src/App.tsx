@@ -106,6 +106,29 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [canRun, running, handleStart]);
 
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  // 同步当前工具至 URL Query 参数 (?tool=xxx)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("tool") !== toolId) {
+        url.searchParams.set("tool", toolId);
+        window.history.replaceState(null, "", url.toString());
+      }
+    }
+  }, [toolId]);
+
+  const handleCopyShareLink = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("tool", toolId);
+    navigator.clipboard.writeText(url.toString()).then(() => {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    });
+  }, [toolId]);
+
   function selectTool(id: string) {
     if (running || id === toolId) return;
     const t = getTool(id);
@@ -240,9 +263,27 @@ export default function App() {
 
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-5 dark:border-slate-800">
             <div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <span className="text-3xl">{tool.icon}</span>
                 <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{tool.name}</h2>
+                <button
+                  type="button"
+                  onClick={handleCopyShareLink}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 active:scale-95 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+                  title="复制当前工具的专属直达链接"
+                >
+                  {copiedLink ? (
+                    <>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">✓</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">已复制链接</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>🔗</span>
+                      <span>分享工具</span>
+                    </>
+                  )}
+                </button>
               </div>
               <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{tool.desc}</p>
             </div>
@@ -353,12 +394,23 @@ export default function App() {
           )}
 
           {tool.outputHint && (
-            <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-2.5 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-300">
-              📐 {tool.outputHint(values, tool.multiple ? [batch[0]?.info ?? null] : slots.map((s) => s.info))}
+            <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200/90 bg-slate-50/70 px-3.5 py-2 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-300">
+              <span className="font-semibold text-slate-500 dark:text-slate-400">
+                {tool.category === "audio" ? "🎵 预期音频规格：" : tool.category === "video" ? "🎬 预期视频规格：" : "📐 目标输出规格："}
+              </span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">
+                {tool.outputHint(values, tool.multiple ? [batch[0]?.info ?? null] : slots.map((s) => s.info))}
+              </span>
               {tool.multiple && batch.length > 1 && (
-                <span className="ml-1 text-slate-500 dark:text-slate-400">（以第 1 张估算，批量时每张按各自尺寸计算）</span>
+                <span className="text-slate-400 dark:text-slate-500">
+                  {tool.category === "audio"
+                    ? "（批量各音频独立处理）"
+                    : tool.category === "video"
+                      ? "（批量各视频按各自原画/参数压制）"
+                      : "（以首张估算，批量各图按各自尺寸计算）"}
+                </span>
               )}
-            </p>
+            </div>
           )}
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
