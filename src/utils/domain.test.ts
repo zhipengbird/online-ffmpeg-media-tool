@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { formatBytes, formatTime, extOf, stem } from "./format";
 import { matchesAccept } from "./accept";
 import { TOOLS, getTool, getDefaults, changeValue } from "../lib/tools";
+import { hexToRgb } from "../lib/idphoto";
 
 describe("Domain Algorithms - format utils", () => {
   it("formatBytes formats boundaries correctly", () => {
@@ -304,6 +305,33 @@ describe("Tool Registry & Schema", () => {
     });
     const vfStretch = resStretch.args[resStretch.args.indexOf("-vf") + 1];
     expect(vfStretch).toContain("scale=600:400");
+  });
+
+  it("id-photo supports custom background colors and hexToRgb parsing", () => {
+    // hexToRgb 边界测试
+    expect(hexToRgb("#fff")).toEqual([255, 255, 255]);
+    expect(hexToRgb("#000000")).toEqual([0, 0, 0]);
+    expect(hexToRgb("438EDB")).toEqual([67, 142, 219]);
+    expect(hexToRgb("#invalid")).toBeNull();
+
+    const tool = getTool("id-photo");
+    const defaults = getDefaults(tool);
+
+    // 测试输出提示文案在自定义颜色时的反映
+    const hintCustom = tool.outputHint?.({
+      ...defaults,
+      spec: "1inch",
+      bg: "custom",
+      customBg: "#10b981",
+    });
+    expect(hintCustom).toContain("自定义(#10b981)");
+
+    const hintGray = tool.outputHint?.({
+      ...defaults,
+      spec: "2inch",
+      bg: "gray",
+    });
+    expect(hintGray).toContain("高级灰底");
   });
 });
 

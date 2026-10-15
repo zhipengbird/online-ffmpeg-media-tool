@@ -276,6 +276,12 @@ const ID_PRESETS: Preset[] = [
     values: { spec: "passport", bg: "white", layout: "single", cutline: true, format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
   },
   {
+    value: "1inch-gray",
+    label: "一寸高级灰",
+    hint: "25×35mm · 商务形象标准",
+    values: { spec: "1inch", bg: "gray", layout: "single", cutline: true, format: "jpg", maxKB: "200", zoom: 100, offsetY: 0 },
+  },
+  {
     value: "1inch-print6",
     label: "一寸6寸相纸",
     hint: "10张冲印排版 · 带裁切线",
@@ -495,7 +501,7 @@ export const TOOLS: ToolDef[] = [
             ? "保持原始分辨率"
             : `${str(values, "scale")}p 标清/高清`;
       const muteStr = values.mute === true ? " · 静音无声" : "";
-      return `输出格式：${str(values, "format").toUpperCase()} · CRF ${num(values, "crf")} · ${scaleStr}${muteStr}`;
+      return `${str(values, "format").toUpperCase()} 格式 · CRF ${num(values, "crf")} · ${scaleStr}${muteStr}`;
     },
     build: ({ values, inputs }) => {
       const crf = num(values, "crf");
@@ -873,7 +879,7 @@ export const TOOLS: ToolDef[] = [
       const volStr = vol !== 1 ? ` · 音量 ${Math.round(vol * 100)}%` : "";
       const sp = Number(str(values, "speed")) || 1;
       const spStr = sp !== 1 ? ` · ${sp}x 变速` : "";
-      return `输出音频：${str(values, "format").toUpperCase()} · ${str(values, "bitrate")}${volStr}${spStr}`;
+      return `${str(values, "format").toUpperCase()} 格式 · 码率 ${str(values, "bitrate")}${volStr}${spStr}`;
     },
     build: ({ values, inputs, infos }) => {
       const start = num(values, "start");
@@ -1115,6 +1121,14 @@ export const TOOLS: ToolDef[] = [
         options: Object.entries(ID_BG).map(([value, b]) => ({ label: b.label, value })),
       },
       {
+        key: "customBg",
+        label: "拾取自定义底色",
+        type: "color",
+        default: "#438EDB",
+        hint: "支持点击色板挑选或输入 Hex",
+        visibleWhen: (v) => str(v, "bg") === "custom",
+      },
+      {
         key: "layout",
         label: "排列排版",
         type: "chips",
@@ -1184,7 +1198,9 @@ export const TOOLS: ToolDef[] = [
     outputHint: (values) => {
       const spec = specOf(str(values, "spec"));
       const px = specPx(spec);
-      const bg = ID_BG[str(values, "bg")]?.label ?? "白底";
+      const bg = str(values, "bg") === "custom"
+        ? `自定义(${str(values, "customBg") || "#438EDB"})`
+        : (ID_BG[str(values, "bg")]?.label ?? "白底");
       const layout = str(values, "layout") || "single";
       const layoutMap: Record<string, string> = {
         single: `单张 ${px.w}×${px.h}px`,
@@ -1200,6 +1216,7 @@ export const TOOLS: ToolDef[] = [
       makeIdPhoto(file, {
         spec: str(values, "spec"),
         bg: str(values, "bg"),
+        customBg: str(values, "customBg") || undefined,
         zoom: num(values, "zoom"),
         offsetY: num(values, "offsetY"),
         layout: (str(values, "layout") as any) || "single",

@@ -33,9 +33,28 @@ export const ID_SPECS: IdSpec[] = [
 
 export const ID_BG: Record<string, { label: string; rgb: [number, number, number] }> = {
   white: { label: "白底", rgb: [255, 255, 255] },
-  blue: { label: "蓝底", rgb: [67, 142, 219] },
+  blue: { label: "经典蓝底", rgb: [67, 142, 219] },
   red: { label: "红底", rgb: [214, 35, 31] },
+  gray: { label: "高级灰底", rgb: [218, 222, 229] },
+  custom: { label: "自定义底色", rgb: [67, 142, 219] },
 };
+
+export function hexToRgb(hex: string): [number, number, number] | null {
+  const clean = hex.replace(/^#/, "");
+  if (clean.length === 3) {
+    const r = parseInt(clean[0] + clean[0], 16);
+    const g = parseInt(clean[1] + clean[1], 16);
+    const b = parseInt(clean[2] + clean[2], 16);
+    return isNaN(r) || isNaN(g) || isNaN(b) ? null : [r, g, b];
+  }
+  if (clean.length === 6) {
+    const r = parseInt(clean.slice(0, 2), 16);
+    const g = parseInt(clean.slice(2, 4), 16);
+    const b = parseInt(clean.slice(4, 6), 16);
+    return isNaN(r) || isNaN(g) || isNaN(b) ? null : [r, g, b];
+  }
+  return null;
+}
 
 /** 输出分辨率（DPI），用于把毫米尺寸换算为像素 */
 export const ID_DPI = 300;
@@ -55,6 +74,8 @@ export type IdPhotoLayout = "single" | "2x2" | "2x4" | "3x3" | "print6";
 export interface IdPhotoOptions {
   spec: string;
   bg: string;
+  /** 自定义背景十六进制色值（如 #3b82f6，仅当 bg === 'custom' 时有效） */
+  customBg?: string;
   /** 人像缩放 100 ~ 150（%） */
   zoom: number;
   /** 人物上下位置 -30 ~ 30（%），正数人物在画面中越靠下 */
@@ -159,7 +180,12 @@ export function findBackground(data: Uint8ClampedArray, w: number, h: number): U
 /** 生成证件照文件（JPG 或 PNG），返回的 File 名称扩展名与格式一致 */
 export async function makeIdPhoto(file: File, opts: IdPhotoOptions): Promise<File> {
   const spec = specOf(opts.spec);
-  const bg = ID_BG[opts.bg] ?? ID_BG.white;
+  let targetRgb: [number, number, number] = [255, 255, 255];
+  if (opts.bg === "custom" && opts.customBg) {
+    targetRgb = hexToRgb(opts.customBg) ?? [67, 142, 219];
+  } else if (ID_BG[opts.bg]) {
+    targetRgb = ID_BG[opts.bg].rgb;
+  }
 
   let bitmap: ImageBitmap;
   try {
@@ -187,9 +213,9 @@ export async function makeIdPhoto(file: File, opts: IdPhotoOptions): Promise<Fil
   for (let p = 0; p < w * h; p++) {
     if (!mask[p]) continue;
     const i = p * 4;
-    d[i] = bg.rgb[0];
-    d[i + 1] = bg.rgb[1];
-    d[i + 2] = bg.rgb[2];
+    d[i] = targetRgb[0];
+    d[i + 1] = targetRgb[1];
+    d[i + 2] = targetRgb[2];
     d[i + 3] = 255;
   }
   sctx.putImageData(img, 0, 0);
@@ -217,7 +243,7 @@ export async function makeIdPhoto(file: File, opts: IdPhotoOptions): Promise<Fil
   const out = makeCanvas(px.w, px.h);
   const octx = out.getContext("2d");
   if (!octx) throw new Error("浏览器不支持 Canvas 2D");
-  octx.fillStyle = `rgb(${bg.rgb.join(",")})`;
+  octx.fillStyle = `rgb(${targetRgb.join(",")})`;
   octx.fillRect(0, 0, px.w, px.h);
   octx.imageSmoothingEnabled = true;
   octx.imageSmoothingQuality = "high";
