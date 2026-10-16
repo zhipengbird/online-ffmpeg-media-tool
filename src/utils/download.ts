@@ -1,5 +1,3 @@
-import JSZip from "jszip";
-
 /** 通过临时 <a> 标签触发浏览器下载 */
 export function downloadBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
@@ -18,6 +16,7 @@ export function downloadBlob(blob: Blob, name: string): void {
  * 若存在同名文件，自动追加序号（如 a.jpg、a-1.jpg），避免覆盖。
  */
 export async function zipFiles(entries: { name: string; blob: Blob }[]): Promise<Blob> {
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const used = new Set<string>();
   for (const { name, blob } of entries) {
