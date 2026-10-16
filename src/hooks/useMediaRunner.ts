@@ -7,6 +7,7 @@ import {
 } from "../lib/tools";
 import {
   ensureFFmpeg,
+  isFFmpegReady,
   probeMedia,
   runFFmpeg,
   terminateFFmpeg,
@@ -142,7 +143,9 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
 
     try {
       const info = await probeMedia(file, (msg) => setCoreMsg(msg));
-      setCoreReady(true);
+      if (isFFmpegReady()) {
+        setCoreReady(true);
+      }
       setCoreMsg("");
       setSlots((prev) =>
         prev.map((s, i) => (i === index && s.file === file ? { ...s, info, probing: false } : s))
@@ -247,7 +250,9 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
     for (const item of added) {
       try {
         const info = await probeMedia(item.file, (msg) => setCoreMsg(msg));
-        setCoreReady(true);
+        if (isFFmpegReady()) {
+          setCoreReady(true);
+        }
         setBatch((prev) => prev.map((i) => (i.id === item.id ? { ...i, info, probing: false } : i)));
       } catch (e) {
         setBatch((prev) => prev.map((i) => (i.id === item.id ? { ...i, probing: false } : i)));

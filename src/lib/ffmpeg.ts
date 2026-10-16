@@ -76,8 +76,19 @@ function spawnWorker(): Worker {
     const p = pending.get(msg.id);
     if (!p) return;
     pending.delete(msg.id);
-    if (msg.ok) p.resolve(msg.data);
-    else p.reject(new Error(msg.error ?? "FFmpeg 执行出错"));
+    if (msg.ok) {
+      p.resolve(msg.data);
+    } else {
+      const errStr = msg.error ?? "FFmpeg 执行出错";
+      if (
+        errStr.includes("memory access out of bounds") ||
+        errStr.includes("abort") ||
+        errStr.includes("Aborted")
+      ) {
+        dispose(new Error(errStr));
+      }
+      p.reject(new Error(errStr));
+    }
   };
 
   w.onerror = (e: ErrorEvent) => {
@@ -90,6 +101,10 @@ function spawnWorker(): Worker {
   };
 
   return w;
+}
+
+export function isFFmpegReady(): boolean {
+  return ready;
 }
 
 function call<T = unknown>(type: string, data: unknown = {}, transfer: Transferable[] = []): Promise<T> {
@@ -200,17 +215,116 @@ async function removeFile(name: string): Promise<void> {
   await call("DELETE_FILE", { path: name }).catch(() => undefined);
 }
 
+/** 使用浏览器原生能力提取图片宽高，0 WASM 内存消耗，耗时仅数毫秒 */
+async function probeImage(file: File): Promise<MediaInfo | null> {
+  const isImage = file.type.startsWith("image/") || /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i.test(file.name);
+  if (!isImage) return null;
+
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bmp = await createImageBitmap(file);
+      const info: MediaInfo = {
+        duration: 0,
+        hasVideo: true,
+        hasAudio: false,
+        width: bmp.width,
+        height: bmp.height,
+      };
+      bmp.close();
+      return info;
+    } catch {
+      // 降级为 Image 对象探测
+    }
+  }
+
+  if (typeof Image !== "undefined") {
+    return new Promise<MediaInfo | null>((resolve) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve({
+          duration: 0,
+          hasVideo: true,
+          hasAudio: false,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        });
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+      img.src = url;
+    });
+  }
+
+  return null;
+}
+
+/** 尝试使用 HTML5 原生 Video / Audio 标签快速读取时长与宽高，避免唤起 FFmpeg 占用内存 */
+async function probeBrowserMedia(file: File): Promise<MediaInfo | null> {
+  const isVideo = file.type.startsWith("video/") || /\.(mp4|webm|mov|m4v)$/i.test(file.name);
+  const isAudio = file.type.startsWith("audio/") || /\.(mp3|wav|ogg|m4a|aac)$/i.test(file.name);
+  if (!isVideo && !isAudio) return null;
+
+  if (typeof document === "undefined") return null;
+
+  return new Promise<MediaInfo | null>((resolve) => {
+    const url = URL.createObjectURL(file);
+    const el = document.createElement(isVideo ? "video" : "audio");
+    el.preload = "metadata";
+    let done = false;
+    const finish = (info: MediaInfo | null) => {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timer);
+      el.removeAttribute("src");
+      el.load();
+      URL.revokeObjectURL(url);
+      resolve(info);
+    };
+    const timer = window.setTimeout(() => finish(null), 2500);
+
+    el.onloadedmetadata = () => {
+      const v = el as HTMLVideoElement;
+      finish({
+        duration: isFinite(el.duration) ? el.duration : 0,
+        hasVideo: isVideo,
+        hasAudio: isAudio || isVideo,
+        width: isVideo ? v.videoWidth : 0,
+        height: isVideo ? v.videoHeight : 0,
+      });
+    };
+    el.onerror = () => {
+      finish(null);
+    };
+    el.src = url;
+  });
+}
+
 /** 读取媒体文件的基础信息（时长、是否有音视频轨、分辨率） */
 export function probeMedia(file: File, onStatus?: StatusCallback): Promise<MediaInfo> {
   return enqueue(async () => {
+    // 1. 优先尝试原生极速探测（图片与常见音视频），毫秒级完成且绝不污染 WASM
+    const imgInfo = await probeImage(file);
+    if (imgInfo) return imgInfo;
+
+    const mediaInfo = await probeBrowserMedia(file);
+    if (mediaInfo) return mediaInfo;
+
+    // 2. 特殊格式（如 flv/mkv/avi 等）回退到 FFmpeg 探测
     await ensureFFmpeg(onStatus);
-    const name = "probe_input";
+    const name = `probe_${Date.now()}`;
     const logs: string[] = [];
     logSink = (line) => logs.push(line);
     try {
       await writeInput(name, file);
-      // 没有输出文件，ffmpeg 会返回非 0，但日志中包含完整的流信息
-      await exec(["-hide_banner", "-i", name]);
+      // 关键防崩：带上 -t 0.001 -f null - 确保 FFmpeg 正常退出（code 0），避免无输出文件触发 abort()
+      await exec(["-hide_banner", "-i", name, "-t", "0.001", "-f", "null", "-"]);
+      return parseProbe(logs);
+    } catch {
+      // 容错：即使有轻微告警，也尝试从已输出日志中提取流信息
       return parseProbe(logs);
     } finally {
       logSink = null;
@@ -255,6 +369,16 @@ export function runFFmpeg(params: RunParams): Promise<Uint8Array> {
       const out = await call<Uint8Array>("READ_FILE", { path: params.outputName });
       params.onProgress?.(1);
       return out;
+    } catch (err: unknown) {
+      const errStr = err instanceof Error ? err.message : String(err);
+      if (
+        errStr.includes("memory access out of bounds") ||
+        errStr.includes("abort") ||
+        errStr.includes("Aborted")
+      ) {
+        dispose(err instanceof Error ? err : new Error(errStr));
+      }
+      throw err;
     } finally {
       logSink = null;
       progressSink = null;

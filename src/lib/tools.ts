@@ -172,20 +172,30 @@ function encodeArgs(format: string, quality: number): { ext: string; mime: strin
       return {
         ext: "jpg",
         mime: "image/jpeg",
-        args: ["-frames:v", "1", "-q:v", String(Math.round(2 + ((100 - quality) * 29) / 99))],
+        args: [
+          "-frames:v", "1",
+          "-update", "1",
+          "-pix_fmt", "yuv420p",
+          "-q:v", String(Math.round(2 + ((100 - quality) * 29) / 99)),
+        ],
       };
     case "webp":
       return {
         ext: "webp",
         mime: "image/webp",
-        args: ["-frames:v", "1", "-c:v", "libwebp", "-quality", String(quality)],
+        args: [
+          "-frames:v", "1",
+          "-update", "1",
+          "-c:v", "libwebp",
+          "-quality", String(quality),
+        ],
       };
     case "bmp":
-      return { ext: "bmp", mime: "image/bmp", args: ["-frames:v", "1"] };
+      return { ext: "bmp", mime: "image/bmp", args: ["-frames:v", "1", "-update", "1"] };
     case "gif":
-      return { ext: "gif", mime: "image/gif", args: ["-frames:v", "1"] };
+      return { ext: "gif", mime: "image/gif", args: ["-frames:v", "1", "-update", "1"] };
     default:
-      return { ext: "png", mime: "image/png", args: ["-frames:v", "1"] };
+      return { ext: "png", mime: "image/png", args: ["-frames:v", "1", "-update", "1"] };
   }
 }
 
@@ -766,19 +776,19 @@ export const TOOLS: ToolDef[] = [
         const vf = `fps=1/${interval},select='lte(n\\,${count - 1})',scale=${thumbWidth}:-2:flags=lanczos,tile=${cols}x${rows}:padding=8:margin=8:color=white`;
         const outputArgs =
           fmt === "jpg"
-            ? ["-frames:v", "1", "-q:v", "2"]
+            ? ["-frames:v", "1", "-update", "1", "-pix_fmt", "yuv420p", "-q:v", "2"]
             : fmt === "webp"
-              ? ["-frames:v", "1", "-c:v", "libwebp", "-quality", "90"]
-              : ["-frames:v", "1"];
+              ? ["-frames:v", "1", "-update", "1", "-c:v", "libwebp", "-quality", "90"]
+              : ["-frames:v", "1", "-update", "1"];
         return {
           args: ["-i", inputs[0], "-vf", vf, ...outputArgs],
           ext: fmt === "jpg" ? "jpg" : fmt === "webp" ? "webp" : "png",
           mime: fmt === "jpg" ? "image/jpeg" : fmt === "webp" ? "image/webp" : "image/png",
         };
       }
-      const args = ["-ss", String(num(values, "time")), "-i", inputs[0], "-frames:v", "1"];
+      const args = ["-ss", String(num(values, "time")), "-i", inputs[0], "-frames:v", "1", "-update", "1"];
       if (fmt === "jpg") {
-        args.push("-q:v", "2");
+        args.push("-pix_fmt", "yuv420p", "-q:v", "2");
         return { args, ext: "jpg", mime: "image/jpeg" };
       }
       if (fmt === "webp") {
