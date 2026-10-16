@@ -52,7 +52,7 @@ describe("Domain Algorithms - accept matching", () => {
 
 describe("Tool Registry & Schema", () => {
   it("all tools have valid ids, categories and build functions", () => {
-    expect(TOOLS.length).toBe(12);
+    expect(TOOLS.length).toBe(14);
     for (const tool of TOOLS) {
       expect(tool.id).toBeTruthy();
       expect(tool.name).toBeTruthy();
@@ -80,6 +80,114 @@ describe("Tool Registry & Schema", () => {
     expect(result.args).toContain("28");
     expect(result.args).toContain("-an");
     expect(result.args.some((arg) => arg.includes("scale=-2:720"))).toBe(true);
+  });
+
+  it("video-frame supports both single-frame capture and contact sheets", () => {
+    const tool = getTool("video-frame");
+    const defaults = getDefaults(tool);
+
+    const single = tool.build({ values: defaults, inputs: ["clip.mp4"], infos: [] });
+    expect(single.ext).toBe("png");
+    expect(single.args).toContain("-frames:v");
+    expect(single.args).not.toContain("-vf");
+
+    const contact = tool.build({
+      values: { ...defaults, mode: "contact", interval: 1.5, count: 6, thumbWidth: 320, format: "jpg" },
+      inputs: ["clip.mp4"],
+      infos: [],
+    });
+    const vf = contact.args[contact.args.indexOf("-vf") + 1];
+    expect(contact.ext).toBe("jpg");
+    expect(vf).toContain("fps=1/1.5");
+    expect(vf).toContain("select='lte(n\\,5)'");
+    expect(vf).toContain("tile=3x2");
+  });
+
+  it("video-img2vid builds canvas-fit and Ken Burns motion filters", () => {
+    const tool = getTool("video-img2vid");
+    const defaults = getDefaults(tool);
+    const result = tool.build({
+      values: { ...defaults, duration: 8, fps: 25, canvas: "portrait", fit: "contain", motion: "zoom-in" },
+      inputs: ["cover.jpg", "cover-2.jpg"],
+      infos: [{ duration: 0, hasVideo: true, hasAudio: false, width: 1920, height: 1080 }],
+    });
+    const filterGraph = result.args[result.args.indexOf("-filter_complex") + 1];
+    expect(result.ext).toBe("mp4");
+    expect(filterGraph).toContain("pad=720:1280");
+    expect(filterGraph).toContain("zoompan=");
+    expect(filterGraph).toContain("d=200");
+    expect(filterGraph).toContain("s=720x1280");
+    expect(filterGraph).toContain("concat=n=2");
+
+    const fade = tool.build({
+      values: { ...defaults, duration: 2, transition: "fade" },
+      inputs: ["one.jpg", "two.jpg", "three.jpg"],
+      infos: [],
+    });
+    const fadeGraph = fade.args[fade.args.indexOf("-filter_complex") + 1];
+    expect(fadeGraph).toContain("xfade=transition=fade");
+    expect(fadeGraph).toContain("offset=1.500");
+
+    const withAudio = tool.build({
+      values: { ...defaults, soundtrack: "audio", audioBitrate: "192k" },
+      inputs: ["cover.jpg", "music.mp3"],
+      infos: [{ duration: 0, hasVideo: true, hasAudio: false, width: 1280, height: 720 }],
+    });
+    expect(withAudio.args).toContain("-map");
+    expect(withAudio.args).toContain("1:a:0");
+    expect(withAudio.args).toContain("192k");
+  });
+
+  it("video-img2vid supports pan motion, visual styles, and wipe transitions", () => {
+    const tool = getTool("video-img2vid");
+    const defaults = getDefaults(tool);
+    const result = tool.build({
+      values: {
+        ...defaults,
+        duration: 3,
+        fps: 20,
+        motion: "pan-left",
+        style: "sepia",
+        transition: "wipeleft",
+      },
+      inputs: ["one.jpg", "two.jpg"],
+      infos: [],
+    });
+    const filterGraph = result.args[result.args.indexOf("-filter_complex") + 1];
+    expect(filterGraph).toContain("crop=w='iw*0.88':h='ih*0.88'");
+    expect(filterGraph).toContain("colorchannelmixer=.393:.769:.189");
+    expect(filterGraph).toContain("xfade=transition=wipeleft");
+    expect(tool.outputHint?.({ ...defaults, motion: "pan-left", style: "sepia", transition: "wipeleft" })).toContain("向左平移");
+    expect(tool.outputHint?.({ ...defaults, motion: "pan-left", style: "sepia", transition: "wipeleft" })).toContain("复古棕褐");
+    expect(tool.outputHint?.({ ...defaults, motion: "pan-left", style: "sepia", transition: "wipeleft" })).toContain("向左擦除");
+  });
+
+  it("image-gif builds a multi-image palette pipeline", () => {
+    const tool = getTool("image-gif");
+    const defaults = getDefaults(tool);
+    const result = tool.build({
+      values: { ...defaults, duration: 0.8, fps: 10, width: 480, loopMode: "once" },
+      inputs: ["one.jpg", "two.png", "three.webp"],
+      infos: [],
+    });
+    const filterGraph = result.args[result.args.indexOf("-filter_complex") + 1];
+    expect(result.ext).toBe("gif");
+    expect(result.args.filter((arg) => arg === "-loop")).toHaveLength(4);
+    expect(filterGraph).toContain("concat=n=3:v=1:a=0");
+    expect(filterGraph).toContain("pad=480:480");
+    expect(filterGraph).toContain("palettegen=max_colors=256");
+    expect(filterGraph).toContain("paletteuse=dither=sierra2_4a");
+    expect(result.args).toContain("-1");
+  });
+
+  it("image-meme exposes Canvas caption settings and image output", () => {
+    const tool = getTool("image-meme");
+    const defaults = getDefaults(tool);
+    const result = tool.build({ values: { ...defaults, format: "png" }, inputs: ["input.png"], infos: [] });
+    expect(tool.multiple).toBe(true);
+    expect(tool.preprocess).toBeTypeOf("function");
+    expect(result.ext).toBe("png");
+    expect(result.args).toEqual(["-i", "input.png", "-frames:v", "1", "-c:v", "copy"]);
   });
 
   it("consolidated video-edit combines trim, speed, and flip", () => {
@@ -334,4 +442,3 @@ describe("Tool Registry & Schema", () => {
     expect(hintGray).toContain("高级灰底");
   });
 });
-

@@ -10,16 +10,19 @@ export interface MergeItem {
 interface Props {
   items: MergeItem[];
   disabled: boolean;
+  mode?: "image" | "video" | "gif";
   onAdd: (files: File[]) => void;
   onRemove: (id: string) => void;
   onMove: (index: number, direction: -1 | 1) => void;
   onClear: () => void;
 }
 
-export default function MergeStitchPanel({ items, disabled, onAdd, onRemove, onMove, onClear }: Props) {
+export default function MergeStitchPanel({ items, disabled, mode = "image", onAdd, onRemove, onMove, onClear }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const totalSize = items.reduce((sum, it) => sum + it.file.size, 0);
+  const isVideo = mode === "video";
+  const isGif = mode === "gif";
 
   const pick = () => {
     if (!disabled) inputRef.current?.click();
@@ -29,8 +32,20 @@ export default function MergeStitchPanel({ items, disabled, onAdd, onRemove, onM
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
         <div>
-          <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">待拼接图片素材（支持 2 ~ 30 张）</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">将按列表顺序从上到下（或从左到右）依次拼接，可自由调整顺序</p>
+          <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            {isVideo
+              ? "视频图片素材（支持 1 ~ 30 张）"
+              : isGif
+                ? "GIF 图片素材（支持 1 ~ 30 张）"
+                : "待拼接图片素材（支持 2 ~ 30 张）"}
+          </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {isVideo
+              ? "按列表顺序制作连续画面，可自由调整顺序"
+              : isGif
+                ? "按列表顺序制作 GIF 动图，可自由调整顺序"
+                : "将按列表顺序从上到下（或从左到右）依次拼接，可自由调整顺序"}
+          </p>
         </div>
         {items.length > 0 && (
           <div className="flex items-center gap-3">
@@ -84,7 +99,7 @@ export default function MergeStitchPanel({ items, disabled, onAdd, onRemove, onM
         <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
           {items.length > 0 ? "➕ 继续添加图片（按住 Shift / Ctrl 可多选）" : "点击选择多张图片，或将图片拖拽到此处"}
         </p>
-        <p className="text-xs text-slate-400 dark:text-slate-500">支持 JPG、PNG、WebP、BMP、TIFF 等主流图片格式</p>
+        <p className="text-xs text-slate-400 dark:text-slate-500">支持 JPG、PNG、WebP、BMP、GIF、TIFF 等主流图片格式</p>
       </div>
 
       <input
@@ -101,9 +116,9 @@ export default function MergeStitchPanel({ items, disabled, onAdd, onRemove, onM
       />
 
       {/* 提示信息 */}
-      {items.length === 1 && (
+      {items.length === 1 && mode === "image" && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-700 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
-          ⚠️ 当前已选 1 张图片，拼接至少需要 2 张图片，请继续点击上方添加更多图片。
+          ⚠️ 当前已选 1 张图片，图片拼接至少需要 2 张图片，请继续点击上方添加更多图片。
         </div>
       )}
 

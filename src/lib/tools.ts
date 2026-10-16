@@ -1,5 +1,6 @@
 import type { MediaInfo } from "./ffmpeg";
 import { ID_BG, ID_SPECS, makeIdPhoto, specOf, specPx } from "./idphoto";
+import { renderMeme } from "./meme";
 import { renderTextWatermark } from "./textwatermark";
 
 export type Category = "video" | "audio" | "image";
@@ -413,7 +414,7 @@ const IMAGE_STUDIO_PRESETS: Preset[] = [
 ];
 
 /* =========================================================================
-   CONSOLIDATED TOOLS MATRIX (23 项精简合并为 12 项场景化超级工具)
+   CONSOLIDATED TOOLS MATRIX (23 项精简合并为 14 项场景化超级工具)
 ========================================================================= */
 
 export const TOOLS: ToolDef[] = [
@@ -688,17 +689,60 @@ export const TOOLS: ToolDef[] = [
     },
   },
 
-  // ================= 4. 视频精准截图 =================
+  // ================= 4. 视频抽帧 / 联系表 =================
   {
     id: "video-frame",
     category: "video",
-    name: "视频精准截图",
+    name: "视频抽帧 / 联系表",
     icon: "📸",
-    desc: "截取视频指定时间点的一帧画面，保存为高清图片。",
+    desc: "截取单帧封面，或按时间间隔生成多帧联系表，适合选封面、审片和快速查看关键画面。",
     accept: [VIDEO_ACCEPT],
     inputLabels: ["视频文件"],
     fields: [
-      TIME_FIELD("time", "截取时间点", 1),
+      {
+        key: "mode",
+        label: "抽帧方式",
+        type: "chips",
+        default: "single",
+        options: [
+          { label: "单帧封面", value: "single" },
+          { label: "多帧联系表", value: "contact" },
+        ],
+      },
+      { ...TIME_FIELD("time", "截取时间点", 1), visibleWhen: (v) => str(v, "mode") === "single" },
+      {
+        key: "interval",
+        label: "抽帧间隔",
+        type: "number",
+        default: 2,
+        min: 0.1,
+        max: 60,
+        step: 0.1,
+        unit: "秒",
+        visibleWhen: (v) => str(v, "mode") === "contact",
+      },
+      {
+        key: "count",
+        label: "最多帧数",
+        type: "number",
+        default: 6,
+        min: 2,
+        max: 30,
+        step: 1,
+        unit: "帧",
+        visibleWhen: (v) => str(v, "mode") === "contact",
+      },
+      {
+        key: "thumbWidth",
+        label: "单帧宽度",
+        type: "number",
+        default: 320,
+        min: 120,
+        max: 800,
+        step: 10,
+        unit: "px",
+        visibleWhen: (v) => str(v, "mode") === "contact",
+      },
       {
         key: "format",
         label: "图片格式",
@@ -713,6 +757,25 @@ export const TOOLS: ToolDef[] = [
     ],
     build: ({ values, inputs }) => {
       const fmt = str(values, "format");
+      if (str(values, "mode") === "contact") {
+        const interval = Math.max(0.1, Math.min(60, num(values, "interval", 2)));
+        const count = Math.max(2, Math.min(30, Math.round(num(values, "count", 6))));
+        const thumbWidth = Math.max(120, Math.min(800, Math.round(num(values, "thumbWidth", 320))));
+        const cols = Math.ceil(Math.sqrt(count));
+        const rows = Math.ceil(count / cols);
+        const vf = `fps=1/${interval},select='lte(n\\,${count - 1})',scale=${thumbWidth}:-2:flags=lanczos,tile=${cols}x${rows}:padding=8:margin=8:color=white`;
+        const outputArgs =
+          fmt === "jpg"
+            ? ["-frames:v", "1", "-q:v", "2"]
+            : fmt === "webp"
+              ? ["-frames:v", "1", "-c:v", "libwebp", "-quality", "90"]
+              : ["-frames:v", "1"];
+        return {
+          args: ["-i", inputs[0], "-vf", vf, ...outputArgs],
+          ext: fmt === "jpg" ? "jpg" : fmt === "webp" ? "webp" : "png",
+          mime: fmt === "jpg" ? "image/jpeg" : fmt === "webp" ? "image/webp" : "image/png",
+        };
+      }
       const args = ["-ss", String(num(values, "time")), "-i", inputs[0], "-frames:v", "1"];
       if (fmt === "jpg") {
         args.push("-q:v", "2");
@@ -770,39 +833,253 @@ export const TOOLS: ToolDef[] = [
     }),
   },
 
-  // ================= 6. 图片转视频 =================
+  // ================= 6. 图片动态封面视频 =================
   {
     id: "video-img2vid",
     category: "video",
-    name: "图片转视频",
+    name: "图片动态封面视频",
     icon: "📦",
-    desc: "将静态图片生成指定时长的 MP4 视频，适用于幻灯片或短视频封面合成。",
-    accept: [IMAGE_ACCEPT],
-    inputLabels: ["图片文件"],
+    desc: "按顺序将多张图片制作成适合短视频发布的 MP4，支持平移推拉、色彩风格、滑动转场和背景音乐。",
+    accept: [IMAGE_ACCEPT, AUDIO_ACCEPT],
+    inputLabels: ["图片文件", "背景音乐（可选）"],
+    mergeList: true,
     fields: [
       { key: "duration", label: "视频时长", type: "number", default: 5, min: 0.1, max: 3600, step: 0.5, unit: "秒" },
       { key: "fps", label: "帧率 (FPS)", type: "number", default: 25, min: 1, max: 60 },
-    ],
-    build: ({ values, inputs }) => {
-      if (!IMAGE_EXT.test(inputs[0])) {
-        throw new Error("图片转视频只接受图片文件作为输入（PNG / JPG / WebP / BMP / GIF / TIFF）");
-      }
-      return {
-        args: [
-          "-loop",
-          "1",
-          "-i",
-          inputs[0],
-          "-t",
-          String(num(values, "duration")),
-          "-vf",
-          EVEN,
-          "-r",
-          String(num(values, "fps")),
-          ...X264(23),
-          "-movflags",
-          "+faststart",
+      {
+        key: "canvas",
+        label: "视频画幅",
+        type: "select",
+        default: "original",
+        options: [
+          { label: "保持原图比例", value: "original" },
+          { label: "横屏 16:9（1280×720）", value: "landscape" },
+          { label: "竖屏 9:16（720×1280）", value: "portrait" },
+          { label: "正方形 1:1（1080×1080）", value: "square" },
         ],
+      },
+      {
+        key: "fit",
+        label: "画面适配",
+        type: "chips",
+        default: "cover",
+        options: [
+          { label: "铺满画面（裁切）", value: "cover" },
+          { label: "完整显示（留黑边）", value: "contain" },
+        ],
+        visibleWhen: (v) => str(v, "canvas") !== "original",
+      },
+      {
+        key: "motion",
+        label: "动态效果",
+        type: "chips",
+        default: "none",
+        options: [
+          { label: "静止画面", value: "none" },
+          { label: "缓慢放大", value: "zoom-in" },
+          { label: "缓慢缩小", value: "zoom-out" },
+          { label: "向左平移", value: "pan-left" },
+          { label: "向右平移", value: "pan-right" },
+          { label: "向上平移", value: "pan-up" },
+          { label: "向下平移", value: "pan-down" },
+        ],
+      },
+      {
+        key: "style",
+        label: "画面风格",
+        type: "chips",
+        default: "original",
+        options: [
+          { label: "原图色彩", value: "original" },
+          { label: "鲜艳增强", value: "vivid" },
+          { label: "黑白", value: "grayscale" },
+          { label: "暖调", value: "warm" },
+          { label: "冷调", value: "cool" },
+          { label: "复古棕褐", value: "sepia" },
+        ],
+      },
+      {
+        key: "transition",
+        label: "图片转场",
+        type: "chips",
+        default: "cut",
+        options: [
+          { label: "直接切换", value: "cut" },
+          { label: "淡入淡出", value: "fade" },
+          { label: "向左滑动", value: "slideleft" },
+          { label: "向右滑动", value: "slideright" },
+          { label: "向左擦除", value: "wipeleft" },
+          { label: "向右擦除", value: "wiperight" },
+          { label: "圆形展开", value: "circleopen" },
+        ],
+      },
+      {
+        key: "soundtrack",
+        label: "背景音乐",
+        type: "chips",
+        default: "none",
+        options: [
+          { label: "不添加", value: "none" },
+          { label: "添加音频", value: "audio" },
+        ],
+      },
+      {
+        key: "audioBitrate",
+        label: "音频码率",
+        type: "select",
+        default: "128k",
+        options: [
+          { label: "96 kbps", value: "96k" },
+          { label: "128 kbps", value: "128k" },
+          { label: "192 kbps", value: "192k" },
+        ],
+        visibleWhen: (v) => str(v, "soundtrack") === "audio",
+      },
+    ],
+    inputCount: (v) => (str(v, "soundtrack") === "audio" ? 2 : 1),
+    outputHint: (values) => {
+      const canvas = str(values, "canvas");
+      const canvasText = canvas === "landscape" ? "横屏 16:9" : canvas === "portrait" ? "竖屏 9:16" : canvas === "square" ? "正方形" : "原图比例";
+      const motion = str(values, "motion");
+      const motionText =
+        motion === "zoom-in"
+          ? " · 缓慢放大"
+          : motion === "zoom-out"
+            ? " · 缓慢缩小"
+            : motion === "pan-left"
+              ? " · 向左平移"
+              : motion === "pan-right"
+                ? " · 向右平移"
+                : motion === "pan-up"
+                  ? " · 向上平移"
+                  : motion === "pan-down"
+                    ? " · 向下平移"
+                    : "";
+      const styleText =
+        str(values, "style") === "vivid"
+          ? " · 鲜艳增强"
+          : str(values, "style") === "grayscale"
+            ? " · 黑白"
+            : str(values, "style") === "warm"
+              ? " · 暖调"
+              : str(values, "style") === "cool"
+                ? " · 冷调"
+                : str(values, "style") === "sepia"
+                  ? " · 复古棕褐"
+                  : "";
+      const transitionText =
+        str(values, "transition") === "fade"
+          ? " · 淡入淡出"
+          : str(values, "transition") === "slideleft"
+            ? " · 向左滑动"
+            : str(values, "transition") === "slideright"
+              ? " · 向右滑动"
+              : str(values, "transition") === "wipeleft"
+                ? " · 向左擦除"
+                : str(values, "transition") === "wiperight"
+                  ? " · 向右擦除"
+                  : str(values, "transition") === "circleopen"
+                    ? " · 圆形展开"
+                    : "";
+      const audioText = str(values, "soundtrack") === "audio" ? " · 配背景音乐" : "";
+      return `MP4 · 每张 ${num(values, "duration")} 秒 · ${canvasText}${motionText}${styleText}${transitionText}${audioText}`;
+    },
+    build: ({ values, inputs }) => {
+      const hasAudio = str(values, "soundtrack") === "audio";
+      const imageInputs = hasAudio ? inputs.slice(0, -1) : inputs;
+      const audioInput = hasAudio ? inputs[inputs.length - 1] : undefined;
+      if (imageInputs.length < 1) {
+        throw new Error("图片动态封面视频至少需要 1 张图片");
+      }
+      if (imageInputs.some((input) => !IMAGE_EXT.test(input))) {
+        throw new Error("图片动态封面视频只接受图片文件作为输入（PNG / JPG / WebP / BMP / GIF / TIFF）");
+      }
+      if (hasAudio && !audioInput) throw new Error("已选择添加背景音乐，请先选择音频文件");
+      const duration = Math.max(0.1, Math.min(3600, num(values, "duration", 5)));
+      const fps = Math.max(1, Math.min(60, Math.round(num(values, "fps", 25))));
+      const canvas = str(values, "canvas");
+      const sourceW = 1280;
+      const sourceH = 720;
+      const dimensions =
+        canvas === "landscape"
+          ? { w: 1280, h: 720 }
+          : canvas === "portrait"
+            ? { w: 720, h: 1280 }
+            : canvas === "square"
+              ? { w: 1080, h: 1080 }
+              : { w: sourceW - (sourceW % 2), h: sourceH - (sourceH % 2) };
+      const fit = str(values, "fit") === "contain" ? "contain" : "cover";
+      const baseFilter =
+        canvas === "original" && imageInputs.length === 1
+          ? EVEN
+          : fit === "contain"
+            ? `scale=${dimensions.w}:${dimensions.h}:force_original_aspect_ratio=decrease,pad=${dimensions.w}:${dimensions.h}:(ow-iw)/2:(oh-ih)/2:color=black`
+            : `scale=${dimensions.w}:${dimensions.h}:force_original_aspect_ratio=increase,crop=${dimensions.w}:${dimensions.h}`;
+      const motion = str(values, "motion");
+      const frames = Math.max(1, Math.round(duration * fps));
+      const panFrames = Math.max(1, frames - 1);
+      const motionFilter = (motionValue: string) => {
+        if (motionValue === "zoom-in") return `,zoompan=z='min(zoom+0.0015,1.2)':d=${frames}:s=${dimensions.w}x${dimensions.h}:fps=${fps}`;
+        if (motionValue === "zoom-out") return `,zoompan=z='if(eq(on,0),1.2,max(zoom-0.0015,1))':d=${frames}:s=${dimensions.w}x${dimensions.h}:fps=${fps}`;
+        const panDirection = motionValue.replace("pan-", "");
+        if (["left", "right", "up", "down"].includes(panDirection)) {
+          const cropX = panDirection === "left" ? `(iw-ow)*(1-n/${panFrames})` : panDirection === "right" ? `(iw-ow)*n/${panFrames}` : `(iw-ow)/2`;
+          const cropY = panDirection === "up" ? `(ih-oh)*(1-n/${panFrames})` : panDirection === "down" ? `(ih-oh)*n/${panFrames}` : `(ih-oh)/2`;
+          return `,crop=w='iw*0.88':h='ih*0.88':x='${cropX}':y='${cropY}',scale=${dimensions.w}:${dimensions.h}:flags=lanczos`;
+        }
+        return "";
+      };
+      const style = str(values, "style");
+      const styleFilter =
+        style === "vivid"
+          ? ",eq=contrast=1.08:saturation=1.35"
+          : style === "grayscale"
+            ? ",hue=s=0"
+            : style === "warm"
+              ? ",colorbalance=rs=0.08:gs=0.02:bs=-0.08"
+              : style === "cool"
+                ? ",colorbalance=rs=-0.08:gs=0.02:bs=0.08"
+                : style === "sepia"
+                  ? ",colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131"
+                  : "";
+      const selectedTransition = str(values, "transition");
+      const transition = selectedTransition !== "cut" && imageInputs.length > 1 ? selectedTransition : "cut";
+      const transitionDuration = Math.min(0.5, duration / 2);
+      const filterParts: string[] = [];
+      const segmentLabels: string[] = [];
+      for (let i = 0; i < imageInputs.length; i++) {
+        const label = `v${i}`;
+        filterParts.push(`[${i}:v]${baseFilter}${motionFilter(motion)}${styleFilter},trim=duration=${duration},setpts=PTS-STARTPTS[${label}]`);
+        segmentLabels.push(`[${label}]`);
+      }
+
+      let outputLabel = "outv";
+      if (transition !== "cut") {
+        let current = segmentLabels[0];
+        for (let i = 1; i < segmentLabels.length; i++) {
+          const next = `x${i}`;
+          const offset = (i * (duration - transitionDuration)).toFixed(3);
+          filterParts.push(`${current}${segmentLabels[i]}xfade=transition=${transition}:duration=${transitionDuration}:offset=${offset}[${next}]`);
+          current = `[${next}]`;
+        }
+        filterParts.push(`${current}format=yuv420p[${outputLabel}]`);
+      } else {
+        filterParts.push(`${segmentLabels.join("")}concat=n=${segmentLabels.length}:v=1:a=0,format=yuv420p[${outputLabel}]`);
+      }
+
+      const args: string[] = [];
+      for (const input of imageInputs) args.push("-loop", "1", "-i", input);
+      if (hasAudio && audioInput) args.push("-i", audioInput);
+      const totalDuration = imageInputs.length * duration - (imageInputs.length - 1) * (transition !== "cut" ? transitionDuration : 0);
+      args.push("-filter_complex", filterParts.join(";"), "-map", `[${outputLabel}]`, "-t", totalDuration.toFixed(3), "-r", String(fps), ...X264(23));
+      if (hasAudio) {
+        args.push("-map", `${imageInputs.length}:a:0`, ...AAC(str(values, "audioBitrate", "128k")), "-shortest");
+      } else {
+        args.push("-an");
+      }
+      args.push("-movflags", "+faststart");
+      return {
+        args,
         ext: "mp4",
         mime: "video/mp4",
       };
@@ -935,9 +1212,9 @@ export const TOOLS: ToolDef[] = [
   {
     id: "image-studio",
     category: "image",
-    name: "全能图片工坊",
+    name: "图片编辑器 / 全能图片工坊",
     icon: "🖼️",
-    desc: "格式转换、画质压缩、尺寸缩放、旋转翻转、风格调色与 Exif 隐私擦除一站式完成。支持批量。",
+    desc: "图片格式、压缩、尺寸、旋转、滤镜与隐私信息一站式编辑处理，支持批量。",
     multiple: true,
     accept: [IMAGE_ACCEPT],
     inputLabels: ["图片文件"],
@@ -1104,7 +1381,119 @@ export const TOOLS: ToolDef[] = [
     },
   },
 
-  // ================= 9. 智能证件照制作 =================
+  // ================= 9. 图片转 GIF =================
+  {
+    id: "image-gif",
+    category: "image",
+    name: "图片转 GIF 动图",
+    icon: "🎞️",
+    desc: "按顺序将多张 JPG、PNG 或 WebP 图片制作成可循环 GIF 动图，适合相册、表情和连环图。",
+    accept: [IMAGE_ACCEPT],
+    inputLabels: ["GIF 图片素材"],
+    mergeList: true,
+    fields: [
+      { key: "duration", label: "单张停留时长", type: "number", default: 1.5, min: 0.1, max: 30, step: 0.1, unit: "秒" },
+      { key: "fps", label: "帧率 (FPS)", type: "range", default: 12, min: 1, max: 30, hint: "GIF 帧率越高越流畅，文件也越大" },
+      { key: "width", label: "输出宽度", type: "number", default: 720, min: 120, max: 1600, unit: "px", hint: "高度按图片比例自动计算" },
+      {
+        key: "loopMode",
+        label: "循环模式",
+        type: "chips",
+        default: "infinite",
+        options: [
+          { label: "无限循环", value: "infinite" },
+          { label: "单次播放", value: "once" },
+        ],
+      },
+    ],
+    outputHint: (values) =>
+      `GIF · ${Math.round(num(values, "width"))}px 宽 · 每张 ${num(values, "duration")} 秒 · ${num(values, "fps")} FPS${str(values, "loopMode") === "once" ? " · 仅播一次" : " · 无限循环"}`,
+    build: ({ values, inputs }) => {
+      if (inputs.length < 1) throw new Error("图片转 GIF 至少需要 1 张图片");
+      if (inputs.some((input) => !IMAGE_EXT.test(input))) throw new Error("图片转 GIF 只接受图片文件作为输入");
+      const duration = Math.max(0.1, Math.min(30, num(values, "duration", 1.5)));
+      const fps = Math.max(1, Math.min(30, Math.round(num(values, "fps", 12))));
+      const width = Math.max(120, Math.min(1600, Math.round(num(values, "width", 720))));
+      const segments = inputs.map(
+        (_, i) => `[${i}:v]fps=${fps},scale=${width}:${width}:force_original_aspect_ratio=decrease,pad=${width}:${width}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,trim=duration=${duration},setpts=PTS-STARTPTS[v${i}]`,
+      );
+      const labels = inputs.map((_, i) => `[v${i}]`).join("");
+      const filter = [
+        ...segments,
+        `${labels}concat=n=${inputs.length}:v=1:a=0[sequence]`,
+        `[sequence]split=2[gifv][paletteSource]`,
+        `[paletteSource]palettegen=max_colors=256:stats_mode=diff[palette]`,
+        `[gifv][palette]paletteuse=dither=sierra2_4a[out]`,
+      ].join(";");
+      const args: string[] = [];
+      for (const input of inputs) args.push("-loop", "1", "-i", input);
+      args.push(
+        "-filter_complex",
+        filter,
+        "-map",
+        "[out]",
+        "-t",
+        (inputs.length * duration).toFixed(3),
+        "-loop",
+        str(values, "loopMode") === "once" ? "-1" : "0",
+      );
+      return { args, ext: "gif", mime: "image/gif" };
+    },
+  },
+
+  // ================= 10. Meme 生成器 =================
+  {
+    id: "image-meme",
+    category: "image",
+    name: "Meme 生成器",
+    icon: "😄",
+    desc: "在画布上添加多张图片和多个文字图层，实时拖拽调整位置、大小、透明度、颜色与描边后导出 Meme。",
+    accept: [IMAGE_ACCEPT],
+    inputLabels: ["原始图片"],
+    multiple: true,
+    fields: [
+      { key: "topText", label: "顶部文字", type: "text", default: "" },
+      { key: "bottomText", label: "底部文字", type: "text", default: "" },
+      { key: "fontSize", label: "文字大小", type: "range", default: 8, min: 2, max: 16, step: 0.5, unit: "%", hint: "相对于图片短边的比例" },
+      { key: "textColor", label: "文字颜色", type: "color", default: "#ffffff" },
+      { key: "strokeColor", label: "描边颜色", type: "color", default: "#000000" },
+      { key: "strokeWidth", label: "描边强度", type: "range", default: 14, min: 0, max: 30, step: 1, unit: "%字体" },
+      {
+        key: "format",
+        label: "输出格式",
+        type: "select",
+        default: "jpg",
+        options: [
+          { label: "JPG", value: "jpg" },
+          { label: "PNG（保留透明区域）", value: "png" },
+        ],
+      },
+      { ...QUALITY_FIELD, visibleWhen: IMG_QUALITY_VISIBLE },
+    ],
+    outputHint: (values) =>
+      `${str(values, "format").toUpperCase()} Meme · ${str(values, "topText") || str(values, "bottomText") ? "已添加文字" : "无文字，仅导出图片"}`,
+    preprocess: (file, values) =>
+      renderMeme(file, {
+        topText: str(values, "topText"),
+        bottomText: str(values, "bottomText"),
+        fontSize: num(values, "fontSize", 8),
+        textColor: str(values, "textColor", "#ffffff"),
+        strokeColor: str(values, "strokeColor", "#000000"),
+        strokeWidth: num(values, "strokeWidth", 14),
+        format: str(values, "format") === "png" ? "png" : "jpg",
+        quality: num(values, "quality", 92),
+      }),
+    build: ({ values, inputs }) => {
+      const format = str(values, "format") === "png" ? "png" : "jpg";
+      return {
+        args: ["-i", inputs[0], "-frames:v", "1", "-c:v", "copy"],
+        ext: format,
+        mime: format === "png" ? "image/png" : "image/jpeg",
+      };
+    },
+  },
+
+  // ================= 11. 智能证件照制作 =================
   {
     id: "id-photo",
     category: "image",

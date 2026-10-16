@@ -20,6 +20,7 @@ import MobileDrawer from "./components/MobileDrawer";
 import { useTheme } from "./utils/theme";
 import { useMediaRunner } from "./hooks/useMediaRunner";
 import VideoTimelineHelper from "./components/VideoTimelineHelper";
+import MemeEditor from "./components/MemeEditor";
 
 export default function App() {
   const { theme, setTheme } = useTheme();
@@ -69,6 +70,7 @@ export default function App() {
     removeMergeFile,
     moveMergeFile,
     clearMergeFiles,
+    setCustomResult,
     handleStart,
     handleCancel,
     retryCore,
@@ -149,7 +151,9 @@ export default function App() {
   }, [tool]);
 
   const categoryLabel = CATEGORIES.find((c) => c.id === tool.category)?.label ?? "";
+  const isMemeEditor = tool.id === "image-meme";
   const visibleFields = tool.fields
+    .filter(() => !isMemeEditor)
     .filter((f) => !f.visibleWhen || f.visibleWhen(values))
     .map((f) => (f.optionsFor ? { ...f, options: f.optionsFor(values) } : f));
 
@@ -295,7 +299,7 @@ export default function App() {
               )}
               {tool.mergeList && (
                 <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:ring-blue-800">
-                  支持多图拼长图
+                  {tool.id === "video-img2vid" ? "支持多图拼视频" : tool.id === "image-gif" ? "支持多图转 GIF" : "支持多图拼长图"}
                 </span>
               )}
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">
@@ -304,16 +308,31 @@ export default function App() {
             </div>
           </div>
 
-          {tool.mergeList ? (
+          {isMemeEditor ? (
+            <MemeEditor disabled={running} onExport={setCustomResult} onError={setError} />
+          ) : tool.mergeList ? (
             <div className="mt-6">
               <MergeStitchPanel
                 items={mergeFiles}
                 disabled={running}
+                mode={tool.id === "video-img2vid" ? "video" : tool.id === "image-gif" ? "gif" : "image"}
                 onAdd={addMergeFiles}
                 onRemove={removeMergeFile}
                 onMove={moveMergeFile}
                 onClear={clearMergeFiles}
               />
+              {inputCount > 1 && (
+                <div className="mt-5">
+                  <FileDropZone
+                    label={tool.inputLabels[1] ?? "附加文件"}
+                    accept={tool.accept[1]}
+                    file={slots[1].file}
+                    info={slots[1].info}
+                    probing={slots[1].probing}
+                    onFile={(f) => void handleFile(1, f)}
+                  />
+                </div>
+              )}
             </div>
           ) : tool.multiple ? (
             <div className="mt-6">
@@ -393,7 +412,7 @@ export default function App() {
             </div>
           )}
 
-          {tool.outputHint && (
+          {tool.outputHint && !isMemeEditor && (
             <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200/90 bg-slate-50/70 px-3.5 py-2 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-300">
               <span className="font-semibold text-slate-500 dark:text-slate-400">
                 {tool.category === "audio" ? "🎵 预期音频规格：" : tool.category === "video" ? "🎬 预期视频规格：" : "📐 目标输出规格："}
@@ -413,7 +432,7 @@ export default function App() {
             </div>
           )}
 
-          <div className="mt-8 flex flex-wrap items-center gap-3">
+          {!isMemeEditor && <div className="mt-8 flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={handleStart}
@@ -424,8 +443,12 @@ export default function App() {
                 ? "⏳ 处理中…"
                 : tool.multiple && batch.length > 1
                   ? `▶ 开始批量处理（${batch.length} 个文件）`
-                  : tool.mergeList && mergeFiles.length > 1
-                    ? `▶ 开始拼接（共 ${mergeFiles.length} 张图片）`
+                  : tool.mergeList && (mergeFiles.length > 1 || tool.id === "video-img2vid" || tool.id === "image-gif")
+                    ? tool.id === "video-img2vid"
+                      ? `▶ 制作视频（${mergeFiles.length} 张图片）`
+                      : tool.id === "image-gif"
+                        ? `▶ 制作 GIF（${mergeFiles.length} 张图片）`
+                        : `▶ 开始拼接（共 ${mergeFiles.length} 张图片）`
                     : "▶ 开始处理"}
             </button>
             {running && (
@@ -439,12 +462,18 @@ export default function App() {
             )}
             {!canRun && !running && (
               <span className="text-xs text-slate-400 dark:text-slate-500">
-                {tool.mergeList
+                  {tool.mergeList
                   ? mergeFiles.length === 0
-                    ? "请添加至少 2 张待拼接图片"
-                    : mergeFiles.length === 1
+                    ? tool.id === "video-img2vid" || tool.id === "image-gif"
+                      ? "请添加至少 1 张图片"
+                      : "请添加至少 2 张待拼接图片"
+                    : mergeFiles.length === 1 && tool.id !== "video-img2vid" && tool.id !== "image-gif"
                       ? "请继续添加至少 1 张图片"
-                      : "准备就绪，点击开始拼接"
+                      : tool.id === "video-img2vid"
+                        ? "准备就绪，点击制作视频"
+                        : tool.id === "image-gif"
+                          ? "准备就绪，点击制作 GIF"
+                          : "准备就绪，点击开始拼接"
                   : tool.multiple
                     ? batch.length === 0
                       ? "请先添加待处理文件"
@@ -454,9 +483,9 @@ export default function App() {
                       : "请先选择输入文件"}
               </span>
             )}
-          </div>
+          </div>}
 
-          {tool.multiple ? (
+          {tool.multiple && !isMemeEditor ? (
             <BatchResults items={batch} running={running} onError={setError} />
           ) : (
             running && (
@@ -487,7 +516,7 @@ export default function App() {
           )}
 
           <div ref={resultRef}>
-            {!tool.multiple && result && (
+            {(!tool.multiple || isMemeEditor) && result && (
               <ResultPanel
                 result={result}
                 currentToolId={tool.id}

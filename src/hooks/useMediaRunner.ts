@@ -92,7 +92,7 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
   // 第 2 个及之后的槽位：单文件模式为普通输入；批量模式为所有图片共享的附加文件（如水印 Logo）
   const extraReady = slots.slice(1, inputCount).every((s) => s.file !== null && !s.probing);
   const canRun = tool.mergeList
-    ? mergeFiles.length >= 2 && !running
+    ? mergeFiles.length >= (tool.id === "video-img2vid" || tool.id === "image-gif" ? 1 : 2) && extraReady && !running
     : tool.multiple
       ? batch.length > 0 && batch.every((i) => !i.probing) && extraReady
       : slots.slice(0, inputCount).every((s) => s.file !== null && !s.probing);
@@ -160,7 +160,7 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
     if (running || !canRun) return;
     const runId = ++runIdRef.current;
     const files = tool.mergeList
-      ? mergeFiles.map((m) => m.file)
+      ? [...mergeFiles.map((m) => m.file), ...slots.slice(1, inputCount).map((s) => s.file as File)]
       : slots.slice(0, inputCount).map((s) => s.file as File);
 
     setRunning(true);
@@ -426,6 +426,23 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
     setMergeFiles([]);
   }
 
+  function setCustomResult(file: File) {
+    if (running) return;
+    setResult((prev) => {
+      if (prev?.url) URL.revokeObjectURL(prev.url);
+      return {
+        url: URL.createObjectURL(file),
+        file,
+        name: file.name,
+        mime: file.type || "application/octet-stream",
+        size: file.size,
+        inputSize: file.size,
+      };
+    });
+    setError("");
+    setProgress(1);
+  }
+
   return {
     slots,
     batch,
@@ -449,6 +466,7 @@ export function useMediaRunner(tool: ToolDef, values: Values, onSwitchTool: (too
     removeMergeFile,
     moveMergeFile,
     clearMergeFiles,
+    setCustomResult,
     handleStart,
     handleCancel,
     retryCore,
